@@ -1,0 +1,16 @@
+{
+  "name": "tower-defense-3d-online",
+  "version": "1.0.0",
+  "description": "Tower Defense 3D s účty a cloudovým ukládáním (Node.js + PostgreSQL, hosting na Renderu)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "pg": "^8.11.3"
+  },
+  "license": "MIT"
+}

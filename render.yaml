@@ -1,0 +1,25 @@
+# Render Blueprint – web služba (hra + API) a PostgreSQL databáze.
+# Render → New → Blueprint → vyber tento GitHub repozitář.
+services:
+  - type: web
+    name: tower-defense-3d
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET            # tajný klíč pro podpis přihlašovacích tokenů – Render ho vygeneruje sám
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tower-defense-db
+          property: connectionString
+
+databases:
+  - name: tower-defense-db
+    plan: free
+    databaseName: towerdefense
+    user: towerdefense

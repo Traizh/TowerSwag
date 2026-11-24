@@ -1,0 +1,2406 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Tower Defense 3D – Obrana království</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; background: #0f172a; font-family: 'Fredoka', system-ui, sans-serif; color: #fff; overflow: hidden; }
+  canvas { display: block; touch-action: none; }
+  .glass { background: rgba(15, 23, 42, .74); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,.12); }
+  .pop { position: absolute; pointer-events: none; font-weight: 700; font-size: 18px; text-shadow: 0 2px 0 rgba(0,0,0,.55); animation: floatUp .9s ease-out forwards; white-space: nowrap; }
+  @keyframes floatUp { 0% { opacity: 0; transform: translate(-50%, 0) scale(.7); } 15% { opacity: 1; transform: translate(-50%, -8px) scale(1.1); } 100% { opacity: 0; transform: translate(-50%, -52px) scale(1); } }
+  .bump { animation: bump .28s; }
+  @keyframes bump { 50% { transform: scale(1.3); } }
+  #banner.show { animation: banner 1.8s ease-out forwards; }
+  @keyframes banner { 0% { opacity: 0; transform: translate(-50%, -50%) scale(.6); } 18% { opacity: 1; transform: translate(-50%, -50%) scale(1.06); } 75% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -62%) scale(1); } }
+  #toast { transition: opacity .25s, transform .25s; }
+  ::-webkit-scrollbar { height: 6px; } ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.25); border-radius: 3px; }
+</style>
+</head>
+<body class="select-none">
+
+<!-- 3D plátno -->
+<div id="game" class="fixed inset-0"></div>
+
+<!-- Plovoucí texty (peníze) -->
+<div id="pops" class="fixed inset-0 pointer-events-none overflow-hidden"></div>
+
+<!-- HUD overlay -->
+<div id="ui" class="fixed inset-0 pointer-events-none">
+
+  <!-- Horní lišta -->
+  <div id="topbar" class="absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-2 sm:p-3">
+    <div class="pointer-events-auto flex flex-wrap gap-2">
+      <div class="glass rounded-xl px-3 py-1.5 flex items-center gap-2">
+        <span class="text-xl">🌊</span>
+        <div class="leading-none">
+          <div class="text-[10px] uppercase tracking-wider text-slate-300">Vlna · <span id="hudMode"></span></div>
+          <div class="text-lg font-bold"><span id="hudWave">0</span><span class="text-slate-400 text-sm">/<span id="hudMax">15</span></span></div>
+        </div>
+      </div>
+      <div class="glass rounded-xl px-3 py-1.5 flex items-center gap-2">
+        <span class="text-xl">❤️</span>
+        <div class="leading-none">
+          <div class="text-[10px] uppercase tracking-wider text-slate-300">Životy</div>
+          <div id="hudLives" class="text-lg font-bold">20</div>
+        </div>
+      </div>
+      <div class="glass rounded-xl px-3 py-1.5 flex items-center gap-2">
+        <span class="text-xl">🪙</span>
+        <div class="leading-none">
+          <div class="text-[10px] uppercase tracking-wider text-slate-300">Peníze</div>
+          <div id="hudMoney" class="text-lg font-bold text-amber-300">400</div>
+        </div>
+      </div>
+    </div>
+    <div class="pointer-events-auto flex flex-wrap justify-end gap-2">
+      <button id="btnWave" class="rounded-xl px-4 py-2 font-bold bg-emerald-500 hover:bg-emerald-400 active:scale-95 transition shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"></button>
+      <button id="btnAuto" title="Automatické spouštění vln (A)" class="glass rounded-xl px-3 py-2 font-bold hover:bg-slate-700/80 active:scale-95 transition">🔁 Auto: vyp</button>
+      <button id="btnSpeed" title="Rychlost hry (F)" class="glass rounded-xl px-3 py-2 font-bold hover:bg-slate-700/80 active:scale-95 transition">⏩ 1x</button>
+      <button id="btnPause" title="Pauza (Mezerník)" class="glass rounded-xl px-3 py-2 font-bold hover:bg-slate-700/80 active:scale-95 transition">⏸</button>
+      <button id="btnSound" title="Zvuk" class="glass rounded-xl px-3 py-2 font-bold hover:bg-slate-700/80 active:scale-95 transition">🔊</button>
+    </div>
+  </div>
+
+  <!-- Schopnosti hráče (Q/W/E/R) -->
+  <div id="abilities" class="absolute left-2 top-1/2 -translate-y-1/2 flex-col gap-2 pointer-events-auto" style="display:none"></div>
+
+  <!-- Panel vybrané věže -->
+  <div id="towerPanel" class="hidden absolute top-1/2 -translate-y-1/2 w-56 sm:w-64 pointer-events-auto glass rounded-2xl p-3 shadow-2xl" style="right:12px">
+    <div class="flex items-center justify-between gap-2">
+      <div class="flex items-center gap-2">
+        <span id="tpIcon" class="text-3xl"></span>
+        <div class="leading-tight">
+          <div id="tpName" class="font-bold"></div>
+          <div id="tpLevel" class="text-xs text-amber-300"></div>
+        </div>
+      </div>
+      <button id="tpClose" class="text-slate-300 hover:text-white text-xl px-2" title="Zavřít (Esc)">✕</button>
+    </div>
+    <div id="tpStats" class="mt-2 space-y-0.5 text-sm"></div>
+    <div id="tpStatus" class="mt-1 text-xs font-bold text-yellow-300 min-h-[16px]"></div>
+    <div id="tpNext" class="mt-1 text-[11px] text-emerald-300 min-h-[14px]"></div>
+    <button id="btnTarget" class="mt-2 w-full rounded-lg px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 active:scale-95 transition"></button>
+    <div class="mt-2 grid grid-cols-2 gap-2">
+      <button id="btnUpgrade" class="rounded-lg px-2 py-2 text-sm font-bold bg-sky-500 hover:bg-sky-400 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed"></button>
+      <button id="btnSell" class="rounded-lg px-2 py-2 text-sm font-bold bg-rose-500 hover:bg-rose-400 active:scale-95 transition"></button>
+    </div>
+  </div>
+
+  <!-- Hláška / toast + banner -->
+  <div id="toast" class="absolute left-1/2 top-20 -translate-x-1/2 opacity-0 glass rounded-full px-4 py-1.5 text-sm font-semibold"></div>
+  <div id="banner" class="absolute left-1/2 top-1/2 opacity-0 text-5xl sm:text-7xl font-bold text-white" style="text-shadow:0 4px 0 rgba(0,0,0,.45)"></div>
+
+  <!-- Nápověda při stavění -->
+  <div id="hint" class="hidden absolute left-1/2 -translate-x-1/2 glass rounded-full px-4 py-1 text-xs sm:text-sm text-slate-200" style="bottom:118px">Klikni na trávník pro postavení · Shift = stavět dál · Esc / pravé tlačítko = zrušit</div>
+
+  <!-- Obchod -->
+  <div id="shop" class="absolute inset-x-0 bottom-0 p-2 sm:p-3 flex justify-center pointer-events-none">
+    <div id="shopItems" class="pointer-events-auto glass rounded-2xl p-2 flex gap-2 overflow-x-auto max-w-full"></div>
+  </div>
+</div>
+
+<!-- Úvodní obrazovka -->
+<div id="menu" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+  <div class="glass rounded-3xl p-6 sm:p-8 max-w-2xl w-full text-center shadow-2xl max-h-full overflow-y-auto">
+    <div class="flex items-center justify-between gap-2 text-xs sm:text-sm mb-3 text-left">
+      <div id="accountInfo" class="text-slate-300 truncate">👤 Hraješ jako host</div>
+      <button id="btnAccount" class="shrink-0 rounded-lg px-3 py-1.5 font-bold bg-sky-600 hover:bg-sky-500 active:scale-95 transition">🔑 Přihlásit se</button>
+    </div>
+    <div class="text-5xl">🏰</div>
+    <h1 class="text-3xl sm:text-4xl font-bold mt-2">Tower Defense 3D</h1>
+    <p class="text-slate-300 mt-2">Ubraň království před vlnami balónových nájezdníků. Stav věže na trávník, vylepšuj je a přežij všechny vlny. Vyber si obtížnost:</p>
+    <div class="grid sm:grid-cols-2 gap-3 mt-4 text-left text-sm">
+      <div class="bg-slate-800/70 rounded-xl p-3">
+        <div class="font-bold mb-1">Věže</div>
+        <div>🎯 <b>Šipková</b> – levná, rychlá</div>
+        <div>💣 <b>Dělo</b> – pomalé, plošný výbuch</div>
+        <div>❄️ <b>Ledová</b> – zpomaluje nepřátele</div>
+        <div>🔥 <b>Plamenomet</b> – kužel ohně, podpal, ignoruje pancíř</div>
+        <div>⚡ <b>Elektrošoker</b> – blesk přeskakuje mezi více nepřáteli</div>
+        <div>🛡️ <b>Maják</b> – chrání věže před omráčením a zrychluje je</div>
+        <div>🔭 <b>Odstřelovač</b> – obří dosah, ničivá rána, ideální na bosse</div>
+        <div>🧪 <b>Jedová věž</b> – otráví oblast, jed ignoruje pancíř a brání léčení</div>
+        <div>🌀 <b>Vír</b> – odhodí nepřátele zpět po cestě</div>
+        <div>🤖 <b>Továrna na roboty</b> – nestřílí, vysílá roboty a mechy, kteří jdou od základny proti nepřátelům</div>
+        <div class="text-xs text-slate-400 mt-1">V boji můžeš mít vybraných max. 7 věží (výbavu měníš v Obchodě).</div>
+      </div>
+      <div class="bg-slate-800/70 rounded-xl p-3">
+        <div class="font-bold mb-1">Nepřátelé</div>
+        <div>🔴 <b>Červený</b> – základní</div>
+        <div>🟢 <b>Zelený</b> – velmi rychlý</div>
+        <div>🛡️ <b>Obrněný</b> – pomalý, hodně životů, odolný slabým zásahům</div>
+        <div class="text-amber-300 mt-1 text-xs leading-snug">Jen v Normal+: 👻 Duch (imunní vůči ledu) · 💖 Léčitel · 🟠 Dělič (po zničení se rozdělí) · 👑 Boss</div>
+        <div class="text-fuchsia-300 mt-1 text-xs leading-snug">Jen v Hard: ⚡ Šokér · 🌀 Rušič · ☠️ Válečník – <b>omračují věže</b></div>
+        <div class="text-sky-300 mt-1 text-xs leading-snug">♾️ Infinite: všichni nepřátelé ze všech módů, čím dál silnější</div>
+      </div>
+    </div>
+    <p class="text-xs text-slate-400 mt-3">Klávesy: 1–7 výběr věže · Q/W/E/R schopnosti · A auto-vlny · N spustit vlnu · F rychlost · Mezerník pauza · U vylepšit · S prodat · Esc zrušit</p>
+    <div class="mt-4 text-sm text-slate-300">🗺️ Mapa</div>
+    <div id="mapPick" class="mt-1 flex flex-wrap justify-center gap-2"></div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+      <button id="btnEasy" class="rounded-2xl px-4 py-3 bg-emerald-500 hover:bg-emerald-400 active:scale-95 transition shadow-lg text-left">
+        <div class="text-xl font-bold">🟢 Easy</div>
+        <div class="text-xs opacity-90 leading-snug">15 vln · 20 životů · 400 🪙<br>Základní nepřátelé<br><span id="rewardEasy" class="text-yellow-100"></span></div>
+      </button>
+      <button id="btnNormal" class="rounded-2xl px-4 py-3 bg-orange-500 hover:bg-orange-400 active:scale-95 transition shadow-lg text-left">
+        <div class="text-xl font-bold">🟠 Normal</div>
+        <div class="text-xs opacity-90 leading-snug">20 vln · 15 životů · 350 🪙<br>Noví nepřátelé a bossové<br><span id="rewardNormal" class="text-yellow-100"></span></div>
+      </button>
+      <button id="btnHard" class="rounded-2xl px-4 py-3 bg-fuchsia-700 hover:bg-fuchsia-600 active:scale-95 transition shadow-lg text-left">
+        <div class="text-xl font-bold">🟣 Hard</div>
+        <div class="text-xs opacity-90 leading-snug">25 vln · 10 životů · 350 🪙<br>Omračující nepřátelé<br><span id="rewardHard" class="text-yellow-100"></span></div>
+      </button>
+      <button id="btnInfinite" class="rounded-2xl px-4 py-3 bg-sky-600 hover:bg-sky-500 active:scale-95 transition shadow-lg text-left">
+        <div class="text-xl font-bold">♾️ Infinite</div>
+        <div class="text-xs opacity-90 leading-snug">Nekonečné vlny · 20 životů · 450 🪙<br>Všichni nepřátelé ze všech módů<br><span id="rewardInfinite" class="text-yellow-100"></span><br><b id="bestInfinite" class="text-yellow-100"></b></div>
+      </button>
+    </div>
+    <button id="btnShop" class="mt-3 w-full rounded-2xl px-4 py-2.5 font-bold bg-slate-700 hover:bg-slate-600 active:scale-95 transition">🏪 Obchod a výbava · 🏅 <span id="menuCoins" class="text-yellow-300">0</span></button>
+    <div id="menuLoadout" class="mt-2 text-xs text-slate-300"></div>
+  </div>
+</div>
+
+<!-- Přihlášení / registrace -->
+<div id="authOverlay" class="hidden fixed inset-0 z-[70] items-center justify-center p-4 bg-slate-900/85 backdrop-blur-sm">
+  <div class="glass rounded-3xl p-6 max-w-sm w-full shadow-2xl">
+    <div class="text-2xl font-bold">👤 Účet</div>
+    <p class="text-xs text-slate-300 mt-1 leading-snug">Po přihlášení se tvůj postup (🏅 mince, odemčené věže, výbava a rekordy) ukládá do cloudu a máš ho na všech zařízeních.</p>
+    <form id="authForm" class="mt-4 flex flex-col gap-2 text-left">
+      <label class="text-xs text-slate-300">Uživatelské jméno
+        <input id="authUser" type="text" autocomplete="username" maxlength="20" spellcheck="false" autocapitalize="off" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-600 px-3 py-2 text-white outline-none focus:border-sky-400">
+      </label>
+      <label class="text-xs text-slate-300">Heslo
+        <input id="authPass" type="password" autocomplete="current-password" maxlength="72" class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-600 px-3 py-2 text-white outline-none focus:border-sky-400">
+      </label>
+      <div id="authMsg" class="text-sm text-rose-300 min-h-[20px]"></div>
+      <div class="flex gap-2">
+        <button id="btnLogin" type="submit" class="flex-1 rounded-xl px-4 py-2 font-bold bg-sky-600 hover:bg-sky-500 active:scale-95 transition">Přihlásit</button>
+        <button id="btnRegister" type="button" class="flex-1 rounded-xl px-4 py-2 font-bold bg-emerald-600 hover:bg-emerald-500 active:scale-95 transition">Registrovat</button>
+      </div>
+      <button id="btnAuthClose" type="button" class="rounded-xl px-4 py-2 text-sm bg-slate-700 hover:bg-slate-600 active:scale-95 transition">Zavřít</button>
+    </form>
+    <p class="text-[11px] text-slate-400 mt-3 leading-snug">Jméno: 3–20 znaků (písmena, číslice, _ nebo -). Heslo: min. 6 znaků. Při registraci se do účtu nahraje postup z tohoto prohlížeče.</p>
+  </div>
+</div>
+
+<!-- Obchod s věžemi (za mince) -->
+<div id="shopOverlay" class="hidden fixed inset-0 z-[60] items-center justify-center p-4 bg-slate-900/85 backdrop-blur-sm">
+  <div class="glass rounded-3xl p-5 sm:p-7 max-w-2xl w-full shadow-2xl max-h-full overflow-y-auto">
+    <div class="flex items-start justify-between gap-3">
+      <div class="text-left">
+        <div class="text-3xl font-bold">🏪 Obchod</div>
+        <div class="text-sm text-slate-300 mt-1">Za mince 🏅 odemykáš nové věže. Mince nejsou herní peníze 🪙 – získáš je hraním a čím těžší mód, tím víc jich dostaneš. Do boje si můžeš vzít jen <b>7 věží</b> – ostatní si vyměníš zde.</div>
+      </div>
+      <div class="text-right shrink-0">
+        <div class="text-[10px] uppercase tracking-wider text-slate-300">Mince</div>
+        <div class="text-2xl font-bold text-yellow-300">🏅 <span id="shopCoins">0</span></div>
+      </div>
+    </div>
+    <div class="mt-4">
+      <div class="text-xs uppercase tracking-wider text-slate-300 mb-1.5 text-left">Výbava do boje (<span id="shopEquipCount">0</span>/7)</div>
+      <div id="shopSlots" class="flex gap-2"></div>
+    </div>
+    <div id="shopList" class="mt-4 space-y-3"></div>
+    <div id="shopMsg" class="text-center text-sm text-amber-300 min-h-[20px] mt-3"></div>
+    <div class="mt-2 text-center"><button id="btnShopClose" class="rounded-xl px-6 py-2 font-bold bg-slate-600 hover:bg-slate-500 active:scale-95 transition">← Zpět</button></div>
+  </div>
+</div>
+
+<!-- Pauza -->
+<div id="pauseOverlay" class="hidden fixed inset-0 z-40 items-center justify-center bg-slate-900/60 backdrop-blur-sm">
+  <div class="glass rounded-3xl p-8 text-center shadow-2xl">
+    <div class="text-5xl">⏸</div>
+    <div class="text-3xl font-bold mt-2">Pauza</div>
+    <div class="mt-4 flex flex-col gap-2">
+      <button id="btnResume" class="rounded-xl px-6 py-2 font-bold bg-emerald-500 hover:bg-emerald-400 active:scale-95 transition">▶ Pokračovat</button>
+      <button id="btnQuit" class="rounded-xl px-6 py-2 font-bold bg-rose-600 hover:bg-rose-500 active:scale-95 transition">🏠 Ukončit hru</button>
+    </div>
+  </div>
+</div>
+
+<!-- Game Over / Vítězství -->
+<div id="endOverlay" class="hidden fixed inset-0 z-50 items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+  <div class="glass rounded-3xl p-8 text-center shadow-2xl max-w-md w-full">
+    <div id="endIcon" class="text-6xl"></div>
+    <div id="endTitle" class="text-4xl font-bold mt-2"></div>
+    <div id="endText" class="text-slate-300 mt-2"></div>
+    <div class="mt-5 flex flex-wrap justify-center gap-3">
+      <button id="btnRestart" class="rounded-2xl px-6 py-3 text-lg font-bold bg-emerald-500 hover:bg-emerald-400 active:scale-95 transition shadow-lg">🔄 Hrát znovu</button>
+      <button id="btnEndShop" class="rounded-2xl px-6 py-3 text-lg font-bold bg-yellow-400 hover:bg-yellow-300 text-slate-900 active:scale-95 transition shadow-lg">🏪 Obchod</button>
+      <button id="btnMenu"class="rounded-2xl px-6 py-3 text-lg font-bold bg-slate-600 hover:bg-slate-500 active:scale-95 transition shadow-lg">🏠 Změnit mód</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+const T = THREE;
+
+/* =====================================================================
+ *  KONFIGURACE
+ * ===================================================================== */
+/* Mapy: cesta (waypointy [sloupec, řádek]) + barevné téma. Výběr se pamatuje a při změně se stránka načte znovu. */
+const MAPS = [
+  { id: 'meadow', name: 'Klikatá louka',  icon: '🌿', wp: [[0,2],[4,2],[4,10],[8,10],[8,4],[12,4],[12,10],[16,10],[16,2],[19,2]], theme: { g: [0.27, 0.5, 0.42], p: [0.11, 0.45, 0.66] } },
+  { id: 'desert', name: 'Pouštní spirála', icon: '🏜️', wp: [[0,1],[17,1],[17,12],[2,12],[2,4],[14,4],[14,9],[6,9]], theme: { g: [0.12, 0.6, 0.58], p: [0.07, 0.4, 0.36] } },
+  { id: 'snow',   name: 'Ledový zigzag',   icon: '❄️', wp: [[0,6],[3,6],[3,1],[7,1],[7,12],[11,12],[11,1],[15,1],[15,12],[19,12]], theme: { g: [0.55, 0.3, 0.86], p: [0.6, 0.18, 0.5] } }
+];
+let MAP_IDX = 0;
+try { const m = parseInt(localStorage.getItem('td3d_map'), 10); if (m >= 0 && m < MAPS.length) MAP_IDX = m; } catch (e) { /* výchozí mapa */ }
+const TH = MAPS[MAP_IDX].theme;
+
+const CFG = {
+  TILE: 2, COLS: 20, ROWS: 14,
+  START_LIVES: 20, START_MONEY: 400, MAX_WAVES: 15,
+  MAX_LEVEL: 4, SELL_RATIO: 0.7,
+  // Waypointy cesty v souřadnicích mřížky [sloupec, řádek]
+  WAYPOINTS: MAPS[MAP_IDX].wp
+};
+const { TILE, COLS, ROWS } = CFG;
+
+const TOWER_TYPES = {
+  dart:   { name: 'Šipková věž', icon: '🎯', cost: 100, range: 7,   rate: 0.42, damage: 1,   projSpeed: 34, accent: 0x3b82f6, ring: 0xfde047, desc: 'Levná, rychlá střelba, nízké poškození.' },
+  cannon: { name: 'Dělo',        icon: '💣', cost: 250, range: 8.5, rate: 1.9,  damage: 4,   projSpeed: 20, aoe: 3, accent: 0x64748b, ring: 0xfb923c, desc: 'Pomalé, plošné poškození (AoE).' },
+  ice:    { name: 'Ledová věž',  icon: '❄️', cost: 175, range: 6.5, rate: 1.3,  damage: 0.3, projSpeed: 26, aoe: 2.6, slowFactor: 0.5, slowTime: 2.2, accent: 0x22d3ee, ring: 0x67e8f9, desc: 'Zpomalí nepřátele v okolí zásahu.' },
+  flame:  { name: 'Plamenomet',  icon: '🔥', cost: 225, range: 4.6, rate: 0.1,  damage: 0.35, projSpeed: 0, burnDps: 1.2, burnTime: 1.5, cone: 0.5, accent: 0xf97316, ring: 0xfb923c, desc: 'Krátký dosah, pálí vše v kuželu, podpaluje a ignoruje pancíř.' },
+  tesla:  { name: 'Elektrošoker', icon: '⚡', cost: 300, range: 6.8, rate: 0.9, damage: 1.3, chain: 3, jump: 4.6, accent: 0x6366f1, ring: 0x7dd3fc, desc: 'Blesk přeskakuje z cíle na cíl – zasáhne až 3 nepřátele naráz (vyšší úrovně víc).' },
+  beacon: { name: 'Maják', icon: '🛡️', cost: 200, range: 7.5, rate: 1, damage: 0, aura: 0.15, support: true, accent: 0x10b981, ring: 0x6ee7b7, desc: 'Nestřílí. Věže v dosahu jsou imunní vůči omráčení a střílejí o 15 % rychleji.' },
+  sniper: { name: 'Odstřelovač', icon: '🔭', cost: 350, range: 15, rate: 2.6, damage: 9, bossMul: 1.5, accent: 0x1e3a5f, ring: 0xf87171, desc: 'Obrovský dosah, pomalá, ale devastující rána. Ignoruje pancíř a proti bossům dává o 50 % víc.' },
+  poison: { name: 'Jedová věž', icon: '🧪', cost: 200, range: 6.2, rate: 1.4, damage: 0.4, projSpeed: 24, aoe: 2.2, poisonDps: 1.1, poisonTime: 4, accent: 0x84cc16, ring: 0xa3e635, desc: 'Vrhá jedovaté lahve. Oblak otráví nepřátele: poškození v čase ignoruje pancíř a zastaví léčení.' },
+  vortex: { name: 'Vír', icon: '🌀', cost: 260, range: 5.4, rate: 3, damage: 0.5, push: 3.2, accent: 0x7c3aed, ring: 0xc084fc, desc: 'Vlna energie odhodí všechny nepřátele v dosahu zpět po cestě a krátce je zpomalí. Bossové se brání.' },
+  factory: { name: 'Továrna na roboty', icon: '🤖', cost: 450, range: 0.01, rate: 1, damage: 0, factory: true, upgMul: 2.6, accent: 0x0891b2, ring: 0x22d3ee, desc: 'Nestřílí – vysílá roboty, od úrovně 3 i obřího mecha. Jednotky jdou od základny proti nepřátelům. Velmi drahá na vylepšování.' }
+};
+const TOP = { dart: 3.4, cannon: 2.9, flame: 2.8, ice: 3.8, tesla: 4.0, beacon: 3.8, sniper: 3.6, poison: 3.3, vortex: 3.8, factory: 3.6 };   // výška, kde se zobrazí efekt omráčení
+
+const ENEMY_TYPES = {
+  red:     { hp: 3,  speed: 3.4, reward: 5,  leak: 1, armor: 0,   radius: 0.6, center: 1.2 },
+  green:   { hp: 2,  speed: 6.2, reward: 7,  leak: 1, armor: 0,   radius: 0.5, center: 1.1 },
+  armored: { hp: 70, speed: 1.7, reward: 45, leak: 3, armor: 0.5, radius: 1.1, center: 1.5 },
+  // --- Noví nepřátelé (jen Normal mód) ---
+  ghost:    { hp: 7,   speed: 4.6,  reward: 9,   leak: 1,  armor: 0, radius: 0.6, center: 1.4, slowImmune: true },   // imunní vůči zpomalení
+  healer:   { hp: 22,  speed: 2.7,  reward: 14,  leak: 2,  armor: 0, radius: 0.7, center: 1.3, heals: true },        // léčí okolní nepřátele
+  splitter: { hp: 14,  speed: 2.8,  reward: 12,  leak: 2,  armor: 0, radius: 0.8, center: 1.3, splits: 2 },         // po zničení se rozdělí na 2 červené
+  boss:     { hp: 700, speed: 1.25, reward: 350, leak: 10, armor: 1, radius: 1.7, center: 2.3, boss: true },
+  // --- Noví nepřátelé (jen Hard mód): omračují věže v okolí ---
+  shocker:  { hp: 20,   speed: 3.0,  reward: 16,  leak: 2,  armor: 0,    radius: 0.8,  center: 1.3, stun: { radius: 5.5, time: 2.0, every: 5.0, maxTowers: 2 } },
+  jammer:   { hp: 60,   speed: 2.1,  reward: 32,  leak: 3,  armor: 0.25, radius: 1.0,  center: 1.4, stun: { radius: 7.0, time: 3.0, every: 8.0, maxTowers: 4 } },
+  warlord:  { hp: 1100, speed: 1.15, reward: 600, leak: 15, armor: 1.5,  radius: 1.8,  center: 2.4, boss: true, stun: { radius: 9.0, time: 3.5, every: 7.0, maxTowers: 6 } }
+};
+
+/* =====================================================================
+ *  POMOCNÉ FUNKCE
+ * ===================================================================== */
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const fmt = n => (Math.round(n * 10) / 10).toString();
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function lerpAngle(a, b, t) { const d = ((b - a + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI; return a + d * t; }
+const easeOutBack = x => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+const show = el => { el.classList.remove('hidden'); el.classList.add('flex'); };
+const hide = el => { el.classList.add('hidden'); el.classList.remove('flex'); };
+
+// Cache geometrií (sdílené mezi všemi objekty → méně paměti a rychlejší render)
+const _geo = {};
+const geo = (k, f) => _geo[k] || (_geo[k] = f());
+const std = (color, o = {}) => new T.MeshStandardMaterial(Object.assign({ color, roughness: 0.6, metalness: 0.1 }, o));
+const basicMat = (color, o = {}) => new T.MeshBasicMaterial(Object.assign({ color }, o));
+function mesh(g, m, x = 0, y = 0, z = 0, cast = true) {
+  const o = new T.Mesh(g, m); o.position.set(x, y, z); o.castShadow = cast; o.receiveShadow = true; return o;
+}
+function disposeObject(root) {
+  root.traverse(o => {
+    if (o.material && !o.material.userData.shared) o.material.dispose();
+  });
+}
+const sharedMat = (m) => { m.userData.shared = true; return m; };
+
+/* =====================================================================
+ *  ZVUK (jednoduché syntetické efekty přes WebAudio)
+ * ===================================================================== */
+let audioCtx = null, muted = false;
+const lastSfx = {};
+const SFX = {
+  dart: [700, 0.05, 'square', 0.025, -300], cannon: [130, 0.28, 'sawtooth', 0.07, -80], ice: [1200, 0.12, 'sine', 0.04, -500],
+  pop: [500, 0.08, 'triangle', 0.05, 300], build: [330, 0.18, 'triangle', 0.06, 330], err: [160, 0.15, 'sawtooth', 0.04, -40],
+  leak: [200, 0.35, 'sawtooth', 0.07, -120], boom: [90, 0.35, 'sawtooth', 0.09, -50], up: [500, 0.22, 'sine', 0.06, 500], flame: [240, 0.09, 'sawtooth', 0.012, -120],
+  zap: [900, 0.14, 'sawtooth', 0.035, -700], stun: [160, 0.45, 'square', 0.05, -100],
+  snipe: [320, 0.25, 'sawtooth', 0.07, -260], vortex: [160, 0.42, 'sine', 0.07, 280], poison: [420, 0.18, 'triangle', 0.05, 160],
+  laser: [1300, 0.07, 'square', 0.012, -700]
+};
+function sfx(kind) {
+  if (muted) return;
+  const now = performance.now();
+  if (now - (lastSfx[kind] || 0) < 45) return;
+  lastSfx[kind] = now;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const [f, d, type, v, slide] = SFX[kind];
+    const t0 = audioCtx.currentTime;
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(f, t0);
+    o.frequency.linearRampToValueAtTime(Math.max(40, f + slide), t0 + d);
+    g.gain.setValueAtTime(v, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + d);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(t0); o.stop(t0 + d + 0.02);
+  } catch (e) { /* zvuk není kritický */ }
+}
+
+/* =====================================================================
+ *  RENDERER, SCÉNA, KAMERA, SVĚTLA
+ * ===================================================================== */
+const container = $('game');
+const renderer = new T.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = T.PCFSoftShadowMap;
+container.appendChild(renderer.domElement);
+
+const scene = new T.Scene();
+scene.background = new T.Color(0x9bd7f2);
+scene.fog = new T.Fog(0x9bd7f2, 90, 190);
+
+const camera = new T.PerspectiveCamera(40, 1, 0.5, 400);
+const camTarget = new T.Vector3(0, 0, 2);
+
+function fitCamera() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  const topH = $('topbar').offsetHeight, botH = $('shop').offsetHeight;
+  const regionH = Math.max(h - topH - botH, h * 0.4);
+  const k = 2 * Math.tan(T.MathUtils.degToRad(camera.fov / 2));
+  const dist = Math.max(27 / (k * regionH / h), 44 / (k * camera.aspect));
+  const elev = T.MathUtils.degToRad(56);
+  camera.position.set(camTarget.x, camTarget.y + Math.sin(elev) * dist, camTarget.z + Math.cos(elev) * dist);
+  camera.lookAt(camTarget);
+  // Posun obrazu tak, aby mapa byla vystředěná mezi horní a spodní lištou
+  camera.setViewOffset(w, h, 0, (botH - topH) / 2, w, h);
+  camera.updateProjectionMatrix();
+}
+
+// Světla: ambientní + hemisférické + směrové se stíny
+scene.add(new T.AmbientLight(0xffffff, 0.42));
+scene.add(new T.HemisphereLight(0xdff3ff, 0x6b8f5a, 0.35));
+const sun = new T.DirectionalLight(0xfff1d6, 0.95);
+sun.position.set(-22, 38, 20);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 24, bottom: -24, near: 5, far: 110 });
+sun.shadow.bias = -0.0006;
+scene.add(sun);
+
+/* =====================================================================
+ *  MAPA: mřížka, cesta, dekorace
+ * ===================================================================== */
+const key = (c, r) => r * COLS + c;
+const inBounds = (c, r) => c >= 0 && r >= 0 && c < COLS && r < ROWS;
+const gridToWorld = (c, r, y = 0) => new T.Vector3((c - (COLS - 1) / 2) * TILE, y, (r - (ROWS - 1) / 2) * TILE);
+const worldToGrid = (x, z) => ({ c: Math.floor(x / TILE + COLS / 2), r: Math.floor(z / TILE + ROWS / 2) });
+
+// --- Cesta ---
+const WP = CFG.WAYPOINTS;
+const pathCells = new Set();
+const nearPath = new Set();
+for (let i = 0; i < WP.length - 1; i++) {
+  const [c0, r0] = WP[i], [c1, r1] = WP[i + 1];
+  const dc = Math.sign(c1 - c0), dr = Math.sign(r1 - r0);
+  let c = c0, r = r0;
+  pathCells.add(key(c, r));
+  while (c !== c1 || r !== r1) { c += dc; r += dr; pathCells.add(key(c, r)); }
+}
+pathCells.forEach(k => {
+  const c = k % COLS, r = Math.floor(k / COLS);
+  for (let dc = -1; dc <= 1; dc++) for (let dr = -1; dr <= 1; dr++) if (inBounds(c + dc, r + dr)) nearPath.add(key(c + dc, r + dr));
+});
+
+const pathPts = WP.map(([c, r]) => gridToWorld(c, r));
+const segLen = [], segDir = [], cumLen = [0];
+for (let i = 0; i < pathPts.length - 1; i++) {
+  const d = new T.Vector3().subVectors(pathPts[i + 1], pathPts[i]);
+  const len = d.length();
+  segLen.push(len); segDir.push(d.normalize()); cumLen.push(cumLen[i] + len);
+}
+const pathLength = cumLen[cumLen.length - 1];
+
+/** Pozice na cestě ve vzdálenosti d od startu (do out), směr segmentu do dirOut */
+function posOnPath(d, out, dirOut) {
+  let i = 0;
+  while (i < segLen.length - 1 && d > cumLen[i + 1]) i++;
+  const t = clamp((d - cumLen[i]) / segLen[i], 0, 1);
+  out.lerpVectors(pathPts[i], pathPts[i + 1], t);
+  if (dirOut) dirOut.copy(segDir[i]);
+}
+
+// Obsazená / blokovaná políčka
+const blocked = new Set(pathCells);
+const towerGrid = new Map();
+const isBuildable = (c, r) => inBounds(c, r) && !blocked.has(key(c, r)) && !towerGrid.has(key(c, r));
+
+// --- Moře + základna ostrova ---
+const sea = new T.Mesh(new T.PlaneGeometry(500, 500).rotateX(-Math.PI / 2), std(0x3d9fc4, { roughness: 0.35, metalness: 0.15 }));
+sea.position.y = -1.3; sea.receiveShadow = true; scene.add(sea);
+const slab = mesh(new T.BoxGeometry(COLS * TILE + 2.4, 1.8, ROWS * TILE + 2.4), std(0x8a5a33, { roughness: 0.95 }), 0, -1.4, 0, false);
+scene.add(slab);
+
+// --- Dlaždice (InstancedMesh = 1 draw call pro všechny) ---
+{
+  const grassCount = COLS * ROWS - pathCells.size;
+  const grassTile = new T.InstancedMesh(new T.BoxGeometry(TILE * 0.97, 0.5, TILE * 0.97), std(0xffffff, { roughness: 0.92, metalness: 0 }), grassCount);
+  const pathTile = new T.InstancedMesh(new T.BoxGeometry(TILE, 0.5, TILE), std(0xffffff, { roughness: 0.95, metalness: 0 }), pathCells.size);
+  const dummy = new T.Object3D(), col = new T.Color(), r0 = mulberry32(42);
+  let gi = 0, pi = 0;
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const p = gridToWorld(c, r);
+    if (pathCells.has(key(c, r))) {
+      dummy.position.set(p.x, -0.4, p.z); dummy.updateMatrix(); pathTile.setMatrixAt(pi, dummy.matrix);
+      col.setHSL(TH.p[0], TH.p[1], TH.p[2] + (r0() - 0.5) * 0.05); pathTile.setColorAt(pi++, col);
+    } else {
+      dummy.position.set(p.x, -0.25, p.z); dummy.updateMatrix(); grassTile.setMatrixAt(gi, dummy.matrix);
+      col.setHSL(TH.g[0], TH.g[1], TH.g[2] + ((c + r) % 2) * 0.035 + (r0() - 0.5) * 0.03); grassTile.setColorAt(gi++, col);
+    }
+  }
+  for (const m of [grassTile, pathTile]) { m.receiveShadow = true; m.frustumCulled = false; m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true; scene.add(m); }
+}
+
+// --- Dekorace (stromy a kameny); blokují políčka, ale ne vedle cesty ---
+{
+  const rnd = mulberry32(1337 + MAP_IDX * 77);
+  const candidates = [];
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (!nearPath.has(key(c, r))) candidates.push([c, r]);
+  for (let i = candidates.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [candidates[i], candidates[j]] = [candidates[j], candidates[i]]; }
+  const trunkM = std(0x7c4a21, { roughness: 0.9 }), leafM = [std(0x2e8b3d, { roughness: 0.8 }), std(0x3aa04a, { roughness: 0.8 })], rockM = std(0x8b95a1, { roughness: 0.95, flatShading: true });
+  candidates.slice(0, 20).forEach(([c, r], i) => {
+    blocked.add(key(c, r));
+    const p = gridToWorld(c, r), s = 0.85 + rnd() * 0.5, g = new T.Group();
+    if (i % 4 !== 3) {
+      g.add(mesh(geo('trunk', () => new T.CylinderGeometry(0.18, 0.26, 0.9, 8)), trunkM, 0, 0.45, 0));
+      g.add(mesh(geo('leaf1', () => new T.ConeGeometry(0.85, 1.4, 9)), leafM[i % 2], 0, 1.45, 0));
+      g.add(mesh(geo('leaf2', () => new T.ConeGeometry(0.62, 1.1, 9)), leafM[i % 2], 0, 2.15, 0));
+    } else {
+      g.add(mesh(geo('rock', () => new T.DodecahedronGeometry(0.6, 0)), rockM, 0, 0.35, 0));
+      const small = mesh(geo('rock', () => new T.DodecahedronGeometry(0.6, 0)), rockM, 0.7, 0.2, 0.3); small.scale.setScalar(0.5); g.add(small);
+    }
+    g.position.set(p.x + (rnd() - 0.5) * 0.5, 0, p.z + (rnd() - 0.5) * 0.5);
+    g.rotation.y = rnd() * 6.28; g.scale.setScalar(s);
+    scene.add(g);
+  });
+}
+
+// --- Popisky (sprite) ---
+function makeLabel(text, bg) {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 96;
+  const x = c.getContext('2d');
+  x.fillStyle = bg; x.beginPath(); x.moveTo(24, 8); x.lineTo(232, 8); x.quadraticCurveTo(248, 8, 248, 24); x.lineTo(248, 72); x.quadraticCurveTo(248, 88, 232, 88); x.lineTo(24, 88); x.quadraticCurveTo(8, 88, 8, 72); x.lineTo(8, 24); x.quadraticCurveTo(8, 8, 24, 8); x.fill();
+  x.fillStyle = '#fff'; x.font = '700 46px Fredoka, Arial, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(text, 128, 50);
+  const s = new T.Sprite(new T.SpriteMaterial({ map: new T.CanvasTexture(c), transparent: true, depthTest: false }));
+  s.scale.set(4, 1.5, 1); s.renderOrder = 5; return s;
+}
+
+// --- Startovní portál ---
+const portal = new T.Group();
+const portalRing = mesh(new T.TorusGeometry(1.35, 0.2, 14, 36), std(0x8b5cf6, { emissive: 0x7c3aed, emissiveIntensity: 0.9, roughness: 0.3 }), 0, 1.5, 0);
+const portalRing2 = mesh(new T.TorusGeometry(1.0, 0.09, 10, 32), std(0xc4b5fd, { emissive: 0xa78bfa, emissiveIntensity: 1, roughness: 0.3 }), 0, 1.5, 0, false);
+const portalDisc = new T.Mesh(new T.CircleGeometry(1.2, 32), basicMat(0xa855f7, { transparent: true, opacity: 0.55, side: T.DoubleSide, depthWrite: false }));
+portalDisc.position.y = 1.5;
+portal.add(portalRing, portalRing2, portalDisc);
+for (const s of [-1, 1]) portal.add(mesh(new T.BoxGeometry(0.5, 2.6, 0.6), std(0x475569, { roughness: 0.8 }), 0, 1.3, s * 1.65));
+portal.add(mesh(new T.BoxGeometry(0.6, 0.5, 3.9), std(0x475569, { roughness: 0.8 }), 0, 2.85, 0));
+{ const p = gridToWorld(WP[0][0], WP[0][1]); portal.position.set(p.x - 0.75, 0, p.z); portal.rotation.y = Math.PI / 2; }
+scene.add(portal);
+{ const l = makeLabel('START', '#7c3aed'); const p = gridToWorld(WP[0][0], WP[0][1]); l.position.set(p.x, 4.6, p.z); scene.add(l); }
+
+// --- Cílová základna (hrad) ---
+const base = new T.Group();
+{
+  const wall = std(0xe2e8f0, { roughness: 0.8 }), roof = std(0xdc2626, { roughness: 0.6 });
+  base.add(mesh(new T.BoxGeometry(2.6, 1.8, 2.6), wall, 0, 0.9, 0));
+  for (const [x, z] of [[-1.35, -1.35], [1.35, -1.35], [-1.35, 1.35], [1.35, 1.35]]) {
+    base.add(mesh(new T.CylinderGeometry(0.42, 0.46, 2.4, 12), wall, x, 1.2, z));
+    base.add(mesh(new T.ConeGeometry(0.58, 0.9, 12), roof, x, 2.85, z));
+  }
+  base.add(mesh(new T.BoxGeometry(1.2, 1.0, 1.2), wall, 0, 2.3, 0));
+  base.add(mesh(new T.ConeGeometry(0.95, 1.1, 4), roof, 0, 3.3, 0));
+  base.add(mesh(new T.CylinderGeometry(0.04, 0.04, 1.2, 6), std(0x94a3b8), 0, 4.3, 0));
+  const flag = mesh(new T.PlaneGeometry(0.7, 0.4), std(0xfacc15, { side: T.DoubleSide }), 0.37, 4.65, 0); base.add(flag);
+  const p = gridToWorld(WP[WP.length - 1][0], WP[WP.length - 1][1]); base.position.set(p.x + 0.2, 0, p.z);
+  const l = makeLabel('ZÁKLADNA', '#16a34a'); l.position.set(p.x, 6.2, p.z); scene.add(l);
+}
+scene.add(base);
+
+/* =====================================================================
+ *  STAV HRY
+ * ===================================================================== */
+let state = 'menu';            // menu | playing | gameover | victory
+// Herní módy
+const GAME_MODES = {
+  easy:   { label: 'Easy',   lives: 20, money: 400, waves: 15, speedMul: 1,    rewardMul: 1,    bonusBase: 50, bonusPer: 10, sky: 0x9bd7f2, coinsPerWave: 5, coinsWin: 50, bossCoins: 0 },
+  normal: { label: 'Normal', lives: 15, money: 350, waves: 20, speedMul: 1.08, rewardMul: 1.15, bonusBase: 60, bonusPer: 12, sky: 0xe8a77c, coinsPerWave: 12, coinsWin: 150, bossCoins: 25 },
+  hard:   { label: 'Hard',   lives: 10, money: 350, waves: 25, speedMul: 1.15, rewardMul: 1.2,  bonusBase: 60, bonusPer: 14, sky: 0x3d2c5e, coinsPerWave: 20, coinsWin: 400, bossCoins: 40 },
+  // Infinite: nekonečné vlny se všemi nepřáteli ze všech módů, čím dál silnější (životy, rychlost i počty rostou)
+  infinite: { label: 'Infinite', lives: 20, money: 450, waves: Infinity, speedMul: 1.1, rewardMul: 1.1, bonusBase: 70, bonusPer: 8, sky: 0x1b2a4a, coinsPerWave: 10, coinsWin: 0, bossCoins: 30, infinite: true }
+};
+let mode = 'easy', MODE = GAME_MODES.easy;
+let runCoins = 0, wavesRewarded = 0;     // mince získané v aktuální hře
+
+// --- Trvalý postup (mince + odemčené věže), ukládá se do localStorage ---
+const SAVE_KEY = 'td3d_save_v1';
+const UNLOCK_COST = { dart: 0, cannon: 100, ice: 150, flame: 250, tesla: 300, beacon: 200, sniper: 350, poison: 220, vortex: 320, factory: 500 };   // cena odemčení věže v mincích 🏅
+const MAX_EQUIPPED = 7;                                   // v boji lze mít vybaveno maximálně 7 věží
+const save = { coins: 120, unlocked: ['dart'], equipped: ['dart'], best: {}, ts: 0 };   // ts = čas poslední změny (pro synchronizaci s cloudem)
+/** Převezme uložený postup (z localStorage nebo cloudu), zkontroluje ho a doplní výchozí hodnoty */
+function applySave(s) {
+  let hasEquipped = false;
+  save.coins = 120; save.unlocked = ['dart']; save.equipped = ['dart']; save.best = {}; save.ts = 0;
+  try {
+    if (s && typeof s.coins === 'number' && Array.isArray(s.unlocked)) {
+      save.coins = Math.max(0, Math.floor(s.coins));
+      save.unlocked = s.unlocked.filter(id => TOWER_TYPES[id]);
+      if (Array.isArray(s.equipped)) { hasEquipped = true; save.equipped = s.equipped.filter(id => TOWER_TYPES[id]); }
+      if (s.best && typeof s.best === 'object') save.best = s.best;
+      if (Number.isFinite(s.ts)) save.ts = s.ts;
+    }
+  } catch (e) { /* bez uložení hra funguje dál */ }
+  if (!save.unlocked.includes('dart')) save.unlocked.unshift('dart');
+  save.unlocked = [...new Set(save.unlocked)];
+  // Výbava: jen odemčené, bez duplicit, max 7; u starých uložených her (bez výbavy) se vezme prvních 7 odemčených
+  save.equipped = [...new Set(hasEquipped ? save.equipped : unlockedList())].filter(id => save.unlocked.includes(id));
+  if (!save.equipped.length) save.equipped = ['dart'];
+  save.equipped = Object.keys(TOWER_TYPES).filter(id => save.equipped.includes(id)).slice(0, MAX_EQUIPPED);
+}
+function loadSave() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) { /* ignorováno */ }
+  applySave(s); persist(false);
+}
+/** Uloží postup lokálně a (je-li hráč přihlášen) naplánuje odeslání do cloudu */
+function persist(touch = true) {
+  if (touch) save.ts = Date.now();
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* ignorováno */ }
+  if (touch) cloudQueue();
+}
+const unlockedList = () => Object.keys(TOWER_TYPES).filter(id => save.unlocked.includes(id));
+/** Vybavené věže (pevné pořadí podle seznamu typů → klávesy 1–5 jsou stabilní) */
+const equippedList = () => Object.keys(TOWER_TYPES).filter(id => save.equipped.includes(id) && save.unlocked.includes(id));
+function renderCoins() { $('shopCoins').textContent = save.coins; $('menuCoins').textContent = save.coins; }
+
+/* =====================================================================
+ *  ÚČET A CLOUDOVÉ UKLÁDÁNÍ (server: /api/..., viz README)
+ * ===================================================================== */
+const AUTH_KEY = 'td3d_auth_v1';
+// Adresa serveru s účty. Když hru servíruje sám server (nebo localhost), volá se vlastní adresa; jinak (např. soubor otevřený z disku) tato:
+const RENDER_URL = 'https://towerswag.onrender.com';
+const SAME_ORIGIN = location.hostname === 'towerswag.onrender.com' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+const API_BASE = SAME_ORIGIN ? '' : RENDER_URL;
+const cloud = { token: null, user: null, timer: 0, status: '', enabled: true };
+try { const a = JSON.parse(localStorage.getItem(AUTH_KEY)); if (a && a.token && a.user) { cloud.token = a.token; cloud.user = a.user; } } catch (e) { /* host */ }
+
+async function api(path, method = 'GET', body, keepalive = false) {
+  const res = await fetch(API_BASE + '/api' + path, {
+    method, keepalive: keepalive && !API_BASE,     // keepalive + CORS předběžný dotaz spolu nefungují
+    headers: { 'Content-Type': 'application/json', ...(cloud.token ? { Authorization: 'Bearer ' + cloud.token } : {}) },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  let data = null; try { data = await res.json(); } catch (e) { /* bez těla */ }
+  return { status: res.status, ok: res.ok, data: data || {} };
+}
+function renderAccount() {
+  const info = $('accountInfo'), btn = $('btnAccount');
+  if (!cloud.enabled) { info.textContent = '👤 Host (účty fungují jen při spuštění přes server)'; btn.classList.add('hidden'); return; }
+  if (cloud.user) { info.textContent = `👤 ${cloud.user} · ${cloud.status || '☁️ přihlášen'}`; btn.textContent = 'Odhlásit'; }
+  else { info.textContent = '👤 Host – postup je jen v tomto prohlížeči'; btn.textContent = '🔑 Přihlásit se'; }
+}
+function setAuth(token, user) {
+  cloud.token = token; cloud.user = user;
+  try { token ? localStorage.setItem(AUTH_KEY, JSON.stringify({ token, user })) : localStorage.removeItem(AUTH_KEY); } catch (e) { /* ignorováno */ }
+}
+function cloudQueue() {
+  if (!cloud.token) return;
+  clearTimeout(cloud.timer);
+  cloud.status = '☁️ čeká na uložení'; renderAccount();
+  cloud.timer = setTimeout(() => cloudPush(), 1500);
+}
+async function cloudPush(keep = false) {
+  if (!cloud.token) return;
+  clearTimeout(cloud.timer); cloud.timer = 0;
+  try {
+    const r = await api('/save', 'PUT', { save }, keep);
+    if (r.status === 401) { cloudExpired(); return; }
+    if (r.status === 409 && r.data.save) { applyCloud(r.data.save); cloud.status = '☁️ synchronizováno'; }
+    else cloud.status = r.ok ? '☁️ uloženo' : '⚠️ ukládání selhalo';
+  } catch (e) {
+    cloud.status = '⚠️ offline – uloží se později';
+    cloud.timer = setTimeout(() => cloudPush(), 15000);
+  }
+  renderAccount();
+}
+function refreshAfterSave() {
+  renderCoins(); renderBest(); renderLoadout();
+  if (!$('shopOverlay').classList.contains('hidden')) renderMetaShop();
+}
+function applyCloud(serverSave) { applySave(serverSave); persist(false); refreshAfterSave(); }
+function cloudExpired() { setAuth(null, null); cloud.status = ''; renderAccount(); }
+
+/** Sloučí postup z cloudu s lokálním (novější vyhrává, při rozporu se hráč zeptá) */
+function reconcile(serverSave, serverTs) {
+  if (!serverSave) { cloudPush(); return; }                                  // cloud je prázdný → nahraj lokální
+  const localTs = save.ts || 0;
+  if (localTs > serverTs && localTs > 0) {
+    const keepLocal = confirm('Na tomto zařízení máš novější postup než v cloudu.\n\nOK = použít postup z tohoto zařízení (přepíše cloud)\nZrušit = použít postup z cloudu');
+    if (keepLocal) { cloudPush(); return; }
+  }
+  applyCloud(serverSave);
+  cloud.status = '☁️ synchronizováno';
+}
+async function cloudSync() {                                                  // po načtení stránky, když je hráč přihlášen
+  try {
+    const r = await api('/me');
+    if (r.status === 401) { cloudExpired(); return; }
+    if (r.ok) { reconcile(r.data.save, r.data.ts || 0); }
+    else cloud.status = '⚠️ server nedostupný';
+  } catch (e) { cloud.status = '⚠️ offline'; }
+  renderAccount();
+}
+
+function openAuth() { $('authMsg').textContent = ''; $('authPass').value = ''; show($('authOverlay')); $('authUser').focus(); }
+function closeAuth() { hide($('authOverlay')); }
+async function doAuth(kind) {
+  const username = $('authUser').value.trim(), password = $('authPass').value, msg = $('authMsg');
+  if (!username || !password) { msg.textContent = 'Vyplň jméno i heslo.'; return; }
+  msg.className = 'text-sm text-slate-300 min-h-[20px]'; msg.textContent = 'Čekám na server… (první spuštění může trvat i minutu)';
+  try {
+    const r = await api(kind === 'register' ? '/register' : '/login', 'POST', kind === 'register' ? { username, password, save } : { username, password });
+    if (!r.ok) { msg.className = 'text-sm text-rose-300 min-h-[20px]'; msg.textContent = r.data.error || 'Něco se nepovedlo.'; return; }
+    setAuth(r.data.token, r.data.username);
+    closeAuth();
+    if (kind === 'login') reconcile(r.data.save, r.data.ts || 0);
+    cloud.status = '☁️ přihlášen'; renderAccount();
+  } catch (e) { msg.className = 'text-sm text-rose-300 min-h-[20px]'; msg.textContent = 'Server není dostupný. Zkus to za chvíli.'; }
+}
+async function doLogout() {
+  if (cloud.timer) await cloudPush();
+  setAuth(null, null); cloud.status = '';
+  applySave(null); try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* ignorováno */ }      // na sdíleném zařízení nezůstane cizí postup
+  persist(false); refreshAfterSave(); renderAccount();
+}
+function awardCoins(n) { if (n <= 0) return; save.coins += n; runCoins += n; persist(); renderCoins(); }
+function renderBest() { $('bestInfinite').textContent = save.best.infinite ? `Rekord: ${save.best.infinite} vln` : 'Zatím bez rekordu'; }
+
+/** Přežité (dokončené) vlny – rozehraná vlna se nepočítá */
+const survivedWaves = () => Math.max(0, wave - (waveRunning ? 1 : 0));
+function recordBest() {
+  if (!MODE.infinite) return false;
+  const n = survivedWaves();
+  if (n > (save.best.infinite || 0)) { save.best.infinite = n; persist(); renderBest(); return true; }
+  return false;
+}
+
+// --- Obchod s věžemi + výbava (meta obchod v menu) ---
+/** Vykreslí sloty výbavy v obchodu a krátký přehled v menu */
+function renderLoadout() {
+  const eq = equippedList();
+  $('shopEquipCount').textContent = eq.length;
+  const slots = $('shopSlots'); slots.innerHTML = '';
+  for (let i = 0; i < MAX_EQUIPPED; i++) {
+    const d = document.createElement('div'), id = eq[i];
+    d.className = 'w-11 h-11 rounded-xl flex items-center justify-center text-2xl border ' + (id ? 'bg-emerald-900/40 border-emerald-400/40' : 'border-dashed border-white/20 text-slate-500 text-sm');
+    d.textContent = id ? TOWER_TYPES[id].icon : (i + 1); if (id) d.title = TOWER_TYPES[id].name;
+    slots.appendChild(d);
+  }
+  $('menuLoadout').textContent = `Výbava (${eq.length}/${MAX_EQUIPPED}): ` + eq.map(id => TOWER_TYPES[id].icon).join(' ');
+}
+function renderMetaShop() {
+  renderCoins(); renderLoadout();
+  const list = $('shopList'); list.innerHTML = '';
+  Object.entries(TOWER_TYPES).forEach(([id, c]) => {
+    const owned = save.unlocked.includes(id), price = UNLOCK_COST[id] || 0, eqd = save.equipped.includes(id);
+    const row = document.createElement('div');
+    row.className = 'flex items-center gap-3 rounded-2xl p-3 border ' + (owned ? (eqd ? 'bg-emerald-900/30 border-emerald-400/30' : 'bg-slate-800/70 border-white/10') : 'bg-slate-800/70 border-white/10');
+    row.innerHTML = `<div class="text-4xl">${c.icon}</div>
+      <div class="flex-1 min-w-0 text-left"><div class="font-bold">${c.name}</div>
+      <div class="text-xs text-slate-300 leading-snug">${c.desc}</div>
+      <div class="text-[11px] text-slate-400 mt-0.5">Cena ve hře 🪙 ${c.cost} · ${c.factory ? 'vysílá jednotky' : 'dosah ' + (c.range / TILE).toFixed(1) + ' dl.'}</div></div>`;
+    const b = document.createElement('button');
+    if (owned) {
+      b.textContent = eqd ? '✔ Vybaveno' : 'Vybavit';
+      b.title = eqd ? 'Klikni pro sundání z výbavy' : 'Přidat do výbavy (max. ' + MAX_EQUIPPED + ')';
+      b.className = 'shrink-0 w-28 rounded-xl px-3 py-2 font-bold active:scale-95 transition ' + (eqd ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-sky-600 hover:bg-sky-500');
+      b.addEventListener('click', () => toggleEquip(id));
+    } else {
+      b.innerHTML = `Koupit<div class="text-sm">🏅 ${price}</div>`;
+      b.className = 'shrink-0 w-28 rounded-xl px-3 py-2 font-bold bg-yellow-400 hover:bg-yellow-300 text-slate-900 active:scale-95 transition' + (save.coins < price ? ' opacity-50' : '');
+      b.addEventListener('click', () => buyTower(id));
+    }
+    row.appendChild(b); list.appendChild(row);
+  });
+}
+function openShop() { $('shopMsg').textContent = ''; renderMetaShop(); show($('shopOverlay')); }
+function closeShop() { hide($('shopOverlay')); }
+function toggleEquip(id) {
+  if (!save.unlocked.includes(id)) return;
+  const i = save.equipped.indexOf(id);
+  if (i >= 0) {
+    if (save.equipped.length <= 1) { $('shopMsg').textContent = 'Musíš mít vybavenou aspoň jednu věž.'; sfx('err'); return; }
+    save.equipped.splice(i, 1);
+    $('shopMsg').textContent = `${TOWER_TYPES[id].name} sundána z výbavy.`;
+  } else {
+    if (save.equipped.length >= MAX_EQUIPPED) { $('shopMsg').textContent = `Výbava je plná (${MAX_EQUIPPED}/${MAX_EQUIPPED}) – nejdřív některou věž sundej.`; sfx('err'); return; }
+    save.equipped.push(id);
+    $('shopMsg').textContent = `${TOWER_TYPES[id].name} přidána do výbavy.`; sfx('build');
+  }
+  persist(); renderMetaShop();
+}
+function buyTower(id) {
+  const price = UNLOCK_COST[id] || 0;
+  if (save.unlocked.includes(id)) return;
+  if (save.coins < price) { $('shopMsg').textContent = `Chybí ti ještě ${price - save.coins} 🏅 – získáš je hraním.`; sfx('err'); return; }
+  save.coins -= price; save.unlocked.push(id);
+  const room = save.equipped.length < MAX_EQUIPPED;
+  if (room) save.equipped.push(id);                                   // je-li místo, věž se rovnou vybaví
+  persist();
+  $('shopMsg').textContent = `Odemčeno: ${TOWER_TYPES[id].name}!` + (room ? ' Přidána do výbavy.' : ` Výbava je plná (${MAX_EQUIPPED}/${MAX_EQUIPPED}) – vyměň ji za jinou věž.`);
+  sfx('up');
+  renderMetaShop();
+}
+let paused = false, speed = 1;
+let money = 0, lives = 0, wave = 0, kills = 0;
+let gameTime = 0, waveRunning = false;
+let spawnEvents = [];
+let enemies = [], towers = [], projectiles = [], particles = [], fxs = [], units = [];
+let placingType = null, selectedTower = null, hoverCell = null;
+let baseFlash = 0, warnedStun = false;
+let time = 0;
+
+/* =====================================================================
+ *  HUD / UI
+ * ===================================================================== */
+const hudWave = $('hudWave'), hudLives = $('hudLives'), hudMoney = $('hudMoney');
+$('hudMax').textContent = CFG.MAX_WAVES;
+const bumpEl = el => { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); };
+
+function setMoney(v) { const gain = v > money; money = v; hudMoney.textContent = money; if (gain) bumpEl(hudMoney); refreshShop(); refreshPanel(); }
+function setLives(v) { if (v < lives) bumpEl(hudLives); lives = v; hudLives.textContent = lives; }
+function setWave(v) { wave = v; hudWave.textContent = wave; bumpEl(hudWave); refreshWaveButton(); }
+
+let toastTimer = 0;
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.style.opacity = 1;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.style.opacity = 0; }, 1500);
+}
+function banner(msg) { const b = $('banner'); b.textContent = msg; b.classList.remove('show'); void b.offsetWidth; b.classList.add('show'); }
+
+const pops = $('pops'), _pv = new T.Vector3();
+function popText(p, text, cls) {
+  if (pops.childElementCount > 40) return;
+  _pv.copy(p); _pv.y += 1.5; _pv.project(camera);
+  const d = document.createElement('div');
+  d.className = 'pop ' + cls; d.textContent = text;
+  d.style.left = ((_pv.x * 0.5 + 0.5) * window.innerWidth) + 'px';
+  d.style.top = ((-_pv.y * 0.5 + 0.5) * window.innerHeight) + 'px';
+  pops.appendChild(d); setTimeout(() => d.remove(), 950);
+}
+
+// --- Definice vln ---
+function waveDef(n) { return mode === 'infinite' ? waveDefInfinite(n) : mode === 'hard' ? waveDefHard(n) : mode === 'normal' ? waveDefNormal(n) : waveDefEasy(n); }
+
+/** Infinite mód: všichni nepřátelé ze všech módů, noví typy přibývají s vlnami, počty (s limity kvůli výkonu), životy i rychlost rostou.
+ *  Bossové každých 10 vln, Válečník každých 15 vln, od vlny 30 / 45 jich je víc. */
+function waveDefInfinite(n) {
+  const groups = [], c = (v, max) => Math.max(0, Math.min(Math.round(v), max));
+  const add = (type, count, start, gap, hpMul) => { if (count > 0) groups.push({ type, count, start, gap, hpMul }); };
+  add('red',      c(6 + n * 1.6, 45),        0,   Math.max(0.16, 0.8 - 0.02 * n));
+  if (n >= 2)  add('green',    c(3 + n * 1.1, 40),        2,   Math.max(0.16, 0.6 - 0.015 * n));
+  if (n >= 3)  add('shocker',  c(1 + (n - 1) / 2.2, 12),  3,   Math.max(1.2, 2.4 - 0.03 * n));
+  if (n >= 4)  add('splitter', c(2 + n / 3, 14),          4,   1.3);
+  if (n >= 5)  add('ghost',    c(2 + (n - 4) * 0.9, 24),  3,   Math.max(0.3, 0.75 - 0.01 * n));
+  if (n >= 6)  add('armored',  c(1 + (n - 4) / 2, 14),    6,   Math.max(1.2, 2.6 - 0.04 * n));
+  if (n >= 7)  add('healer',   c((n - 4) / 2.5, 10),      3.5, 2.6);
+  if (n >= 9)  add('jammer',   c((n - 6) / 2.5, 10),      7,   3.2);
+  const bossMul = 1 + 0.12 * (n - 1);
+  if (n % 10 === 0) add('boss',    1 + Math.floor(n / 30), 10, 7, bossMul);
+  if (n % 15 === 0) add('warlord', 1 + Math.floor(n / 45), 12, 8, bossMul);
+  return { hpMul: 1 + 0.15 * (n - 1) + 0.006 * (n - 1) * (n - 1), groups };
+}
+
+// Normal mód: 20 vln, více typů nepřátel, bossové ve vlnách 10, 15 a 20
+function waveDefNormal(n) {
+  const groups = [];
+  groups.push({ type: 'red', count: n <= 10 ? 5 + 2 * n : Math.max(10, 25 - (n - 10)), start: 0, gap: Math.max(0.25, 0.8 - 0.035 * n) });
+  if (n >= 2) groups.push({ type: 'green', count: Math.min(3 + n, 22), start: 2, gap: Math.max(0.28, 0.6 - 0.02 * n) });
+  if (n >= 4) groups.push({ type: 'splitter', count: Math.floor(n / 3) + 1, start: 4, gap: 1.6 });
+  if (n >= 5) groups.push({ type: 'ghost', count: Math.min(2 + Math.floor((n - 4) * 0.9), 16), start: 3, gap: 0.8 });
+  if (n >= 7) groups.push({ type: 'armored', count: Math.floor((n - 5) / 2), start: 6, gap: 3 });
+  if (n >= 8) groups.push({ type: 'healer', count: Math.floor((n - 5) / 3), start: 3.5, gap: 3.5 });
+  if (n === 10 || n === 15) groups.push({ type: 'boss', count: 1, start: 9, gap: 1, hpMul: 1 + 0.08 * (n - 1) });
+  if (n === 20) groups.push({ type: 'boss', count: 2, start: 9, gap: 7, hpMul: 1 + 0.08 * (n - 1) });
+  return { hpMul: 1 + 0.15 * (n - 1), groups };
+}
+
+// Hard mód: 25 vln, omračující nepřátelé (Šokér od vlny 3, Rušič od 9) a bossové ve vlnách 8, 12, 16, 20 a 25
+function waveDefHard(n) {
+  const groups = [];
+  groups.push({ type: 'red', count: n <= 10 ? 6 + 2 * n : Math.max(12, 26 - (n - 10)), start: 0, gap: Math.max(0.22, 0.75 - 0.035 * n) });
+  if (n >= 2) groups.push({ type: 'green', count: Math.min(4 + n, 26), start: 2, gap: Math.max(0.24, 0.55 - 0.02 * n) });
+  if (n >= 3) groups.push({ type: 'shocker', count: Math.min(1 + Math.floor((n - 1) / 2), 10), start: 3, gap: 2.4 });
+  if (n >= 4) groups.push({ type: 'splitter', count: Math.floor(n / 3) + 1, start: 4, gap: 1.5 });
+  if (n >= 5) groups.push({ type: 'ghost', count: Math.min(2 + Math.floor((n - 4) * 0.9), 18), start: 3, gap: 0.75 });
+  if (n >= 6) groups.push({ type: 'armored', count: Math.floor((n - 4) / 2) + 1, start: 6, gap: 2.6 });
+  if (n >= 7) groups.push({ type: 'healer', count: Math.floor((n - 4) / 3), start: 3.5, gap: 3.2 });
+  if (n >= 9) groups.push({ type: 'jammer', count: Math.floor((n - 6) / 3), start: 7, gap: 4.5 });
+  const bossMul = 1 + 0.07 * (n - 1);
+  if (n === 8) groups.push({ type: 'boss', count: 1, start: 10, gap: 1, hpMul: bossMul });
+  if (n === 12) groups.push({ type: 'warlord', count: 1, start: 10, gap: 1, hpMul: bossMul });
+  if (n === 16) groups.push({ type: 'boss', count: 2, start: 10, gap: 8, hpMul: bossMul });
+  if (n === 20) groups.push({ type: 'warlord', count: 2, start: 10, gap: 8, hpMul: bossMul });
+  if (n === 25) { groups.push({ type: 'warlord', count: 2, start: 10, gap: 8, hpMul: bossMul }); groups.push({ type: 'boss', count: 1, start: 16, gap: 1, hpMul: bossMul }); }
+  return { hpMul: 1 + 0.17 * (n - 1), groups };
+}
+
+function waveDefEasy(n) {
+  const groups = [];
+  groups.push({ type: 'red', count: Math.min(5 + 2 * n, 34), start: 0, gap: Math.max(0.28, 0.85 - 0.04 * n) });
+  if (n >= 3) groups.push({ type: 'green', count: Math.min(2 + n, 18), start: 2.5, gap: Math.max(0.3, 0.7 - 0.03 * n) });
+  if (n >= 6) groups.push({ type: 'armored', count: Math.floor((n - 4) / 2), start: 5, gap: 3.2 });
+  return { hpMul: 1 + 0.12 * (n - 1), groups };
+}
+function refreshWaveButton() {
+  const b = $('btnWave');
+  const playing = state === 'playing';
+  if (wave >= CFG.MAX_WAVES) { b.textContent = 'Poslední vlna spuštěna'; b.disabled = true; return; }
+  const def = waveDef(wave + 1), icons = { red: '🔴', green: '🟢', armored: '🛡️', ghost: '👻', healer: '💖', splitter: '🟠', boss: '👑', shocker: '⚡', jammer: '🌀', warlord: '☠️' };
+  const preview = def.groups.map(g => `${icons[g.type]}${g.count}`).join(' ');
+  b.innerHTML = `▶ Vlna ${wave + 1} <span class="text-xs font-normal opacity-90 ml-1">${preview}</span>`;
+  b.disabled = !playing;
+}
+
+// --- Obchod ---
+const shopItems = $('shopItems');
+/** Sestaví lištu věží v boji – jen z vybavených věží (max. 5) */
+function buildShop() {
+  shopItems.innerHTML = '';
+  equippedList().forEach((id, i) => {
+  const c = TOWER_TYPES[id];
+  const b = document.createElement('button');
+  b.dataset.type = id;
+  b.className = 'relative w-32 sm:w-48 text-left rounded-xl p-2 border-2 border-white/10 bg-slate-800/80 hover:bg-slate-700/80 transition active:scale-95 shrink-0';
+  b.innerHTML = `<div class="flex items-center gap-2"><span class="text-2xl">${c.icon}</span><div class="leading-tight"><div class="font-semibold text-sm">${c.name}</div><div class="text-amber-300 font-bold text-sm">🪙 ${c.cost}</div></div></div><div class="hidden sm:block text-[11px] text-slate-300 mt-1 leading-snug">${c.desc}</div><span class="absolute top-1 right-1.5 text-[10px] text-slate-400">${i + 1}</span>`;
+  b.addEventListener('click', () => selectShop(id));
+  shopItems.appendChild(b);
+  });
+  refreshShop();
+}
+function refreshShop() {
+  shopItems.querySelectorAll('button').forEach(b => {
+    const c = TOWER_TYPES[b.dataset.type];
+    b.classList.toggle('opacity-50', money < c.cost);
+    const sel = placingType === b.dataset.type;
+    b.classList.toggle('border-emerald-400', sel);
+    b.classList.toggle('border-white/10', !sel);
+    b.classList.toggle('bg-emerald-900/60', sel);
+  });
+  $('hint').classList.toggle('hidden', !placingType);
+}
+
+/* =====================================================================
+ *  VĚŽE – procedurální modely
+ * ===================================================================== */
+const goldMat = sharedMat(std(0xfacc15, { metalness: 0.6, roughness: 0.25, emissive: 0x7a5b00, emissiveIntensity: 0.4 }));
+
+function buildTower(type) {
+  const g = new T.Group();
+  g.add(mesh(geo('tBase', () => new T.CylinderGeometry(1.0, 1.12, 0.4, 24)), std(0x94a3b8, { roughness: 0.85 }), 0, 0.2, 0));
+  const head = new T.Group(), muzzle = new T.Object3D();
+  let kick = null, orbit = null, crystal = null, kickBase = 0;
+
+  if (type === 'dart') {
+    g.add(mesh(geo('dBody', () => new T.CylinderGeometry(0.5, 0.72, 1.4, 16)), std(0x2f6fe4, { roughness: 0.45 }), 0, 1.1, 0));
+    g.add(mesh(geo('dRing', () => new T.TorusGeometry(0.62, 0.07, 8, 20).rotateX(Math.PI / 2)), std(0xfacc15, { metalness: 0.5, roughness: 0.3 }), 0, 1.5, 0));
+    head.position.y = 2.1;
+    head.add(mesh(geo('dHead', () => new T.SphereGeometry(0.5, 20, 16)), std(0xffd23f, { roughness: 0.4 }), 0, 0, 0));
+    head.add(mesh(geo('dHat', () => new T.ConeGeometry(0.32, 0.55, 12)), std(0xdc2626), 0, 0.62, 0));
+    for (const s of [-1, 1]) {
+      head.add(mesh(geo('eye', () => new T.SphereGeometry(0.11, 10, 8)), std(0xffffff), s * 0.2, 0.12, 0.4, false));
+      head.add(mesh(geo('pupil', () => new T.SphereGeometry(0.055, 8, 6)), std(0x111827), s * 0.2, 0.12, 0.5, false));
+    }
+    head.add(mesh(geo('dBarrel', () => new T.CylinderGeometry(0.13, 0.17, 0.8, 10).rotateX(Math.PI / 2)), std(0x1e293b, { metalness: 0.6, roughness: 0.4 }), 0, -0.15, 0.5));
+    muzzle.position.set(0, -0.15, 0.95); head.add(muzzle);
+  } else if (type === 'cannon') {
+    g.add(mesh(geo('cBody', () => new T.CylinderGeometry(0.85, 1.0, 1.0, 20)), std(0x4b5563, { roughness: 0.55, metalness: 0.3 }), 0, 0.9, 0));
+    g.add(mesh(geo('cRing', () => new T.TorusGeometry(0.9, 0.08, 8, 24).rotateX(Math.PI / 2)), std(0xf59e0b, { metalness: 0.6, roughness: 0.3 }), 0, 1.35, 0));
+    head.position.y = 1.55;
+    head.add(mesh(geo('cDome', () => new T.SphereGeometry(0.8, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2)), std(0x334155, { roughness: 0.5, metalness: 0.4 }), 0, 0, 0));
+    const pivot = new T.Group(); pivot.position.set(0, 0.3, 0); pivot.rotation.x = -0.22; head.add(pivot);
+    kickBase = 0.65;
+    kick = mesh(geo('cBarrel', () => new T.CylinderGeometry(0.33, 0.4, 1.7, 14).rotateX(Math.PI / 2)), std(0x1f2937, { metalness: 0.7, roughness: 0.35 }), 0, 0, kickBase);
+    kick.add(mesh(geo('cMuzzle', () => new T.TorusGeometry(0.37, 0.08, 8, 16)), std(0xf59e0b, { metalness: 0.6, roughness: 0.3 }), 0, 0, 0.85));
+    pivot.add(kick);
+    muzzle.position.set(0, 0, 1.55); pivot.add(muzzle);
+  } else if (type === 'flame') {
+    g.add(mesh(geo('fBody', () => new T.CylinderGeometry(0.72, 0.88, 1.1, 16)), std(0xb91c1c, { roughness: 0.4, metalness: 0.3 }), 0, 0.95, 0));
+    g.add(mesh(geo('fRing', () => new T.TorusGeometry(0.8, 0.08, 8, 24).rotateX(Math.PI / 2)), std(0xf97316, { emissive: 0xc2410c, emissiveIntensity: 0.6, metalness: 0.5, roughness: 0.3 }), 0, 1.3, 0));
+    for (const s of [-1, 1]) g.add(mesh(geo('fTank', () => new T.CylinderGeometry(0.22, 0.22, 0.9, 12)), std(0xfacc15, { roughness: 0.4, metalness: 0.3 }), s * 0.95, 0.85, -0.2));
+    head.position.y = 1.85;
+    head.add(mesh(geo('fHead', () => new T.SphereGeometry(0.55, 18, 14)), std(0x1f2937, { metalness: 0.6, roughness: 0.4 }), 0, 0, 0));
+    head.add(mesh(geo('fNozzle', () => new T.CylinderGeometry(0.2, 0.3, 1.0, 12).rotateX(Math.PI / 2)), std(0x374151, { metalness: 0.7, roughness: 0.35 }), 0, -0.05, 0.65));
+    head.add(mesh(geo('fTip', () => new T.TorusGeometry(0.22, 0.06, 8, 14)), std(0xfb923c, { emissive: 0xf97316, emissiveIntensity: 1 }), 0, -0.05, 1.15, false));
+    muzzle.position.set(0, -0.05, 1.2); head.add(muzzle);
+  } else if (type === 'tesla') {
+    g.add(mesh(geo('tsBody', () => new T.CylinderGeometry(0.5, 0.85, 1.6, 14)), std(0x4338ca, { roughness: 0.4, metalness: 0.4 }), 0, 1.2, 0));
+    for (let i = 0; i < 3; i++) {
+      const c = mesh(geo('tsCoil', () => new T.TorusGeometry(0.7, 0.07, 8, 22).rotateX(Math.PI / 2)), std(0xd97706, { metalness: 0.7, roughness: 0.3 }), 0, 0.7 + i * 0.4, 0);
+      c.scale.setScalar(1 - i * 0.14); g.add(c);
+    }
+    head.position.y = 2.6;
+    head.add(mesh(geo('tsRod', () => new T.CylinderGeometry(0.1, 0.17, 0.9, 8)), std(0x94a3b8, { metalness: 0.7, roughness: 0.3 }), 0, -0.2, 0));
+    crystal = mesh(geo('tsOrb', () => new T.SphereGeometry(0.4, 18, 14)), std(0x7dd3fc, { emissive: 0x38bdf8, emissiveIntensity: 1.1, roughness: 0.15 }), 0, 0.5, 0);
+    head.add(crystal);
+    orbit = new T.Group(); orbit.position.y = 0.5;
+    const rm = std(0xfde047, { emissive: 0xfacc15, emissiveIntensity: 0.9, roughness: 0.3 });
+    orbit.add(mesh(geo('tsRing', () => new T.TorusGeometry(0.68, 0.04, 6, 26)), rm, 0, 0, 0, false));
+    const r2 = mesh(geo('tsRing', () => new T.TorusGeometry(0.68, 0.04, 6, 26)), rm, 0, 0, 0, false); r2.rotation.y = Math.PI / 2; orbit.add(r2);
+    head.add(orbit);
+    muzzle.position.set(0, 0.5, 0); head.add(muzzle);
+  } else if (type === 'beacon') {
+    g.add(mesh(geo('bcBody', () => new T.CylinderGeometry(0.4, 0.75, 1.9, 8)), std(0xe2e8f0, { roughness: 0.5 }), 0, 1.35, 0));
+    g.add(mesh(geo('bcBand', () => new T.TorusGeometry(0.58, 0.07, 8, 20).rotateX(Math.PI / 2)), std(0x10b981, { emissive: 0x059669, emissiveIntensity: 0.6, metalness: 0.4, roughness: 0.3 }), 0, 1.0, 0));
+    head.position.y = 2.7;
+    crystal = mesh(geo('bcGem', () => new T.OctahedronGeometry(0.5, 0)), std(0x6ee7b7, { emissive: 0x10b981, emissiveIntensity: 0.9, roughness: 0.15, flatShading: true }), 0, 0.2, 0);
+    crystal.scale.set(0.8, 1.3, 0.8); head.add(crystal);
+    orbit = new T.Group(); orbit.position.y = 0.2;
+    orbit.add(mesh(geo('bcRing', () => new T.TorusGeometry(0.85, 0.05, 6, 28).rotateX(Math.PI / 2)), std(0xa7f3d0, { emissive: 0x34d399, emissiveIntensity: 0.8, roughness: 0.3 }), 0, 0, 0, false));
+    head.add(orbit); head.add(muzzle);
+  } else if (type === 'sniper') {
+    g.add(mesh(geo('snBody', () => new T.CylinderGeometry(0.34, 0.62, 1.9, 8)), std(0x1e3a5f, { roughness: 0.45, metalness: 0.4 }), 0, 1.35, 0));
+    g.add(mesh(geo('snRing', () => new T.TorusGeometry(0.5, 0.07, 8, 20).rotateX(Math.PI / 2)), std(0xf87171, { emissive: 0xb91c1c, emissiveIntensity: 0.6, metalness: 0.5, roughness: 0.3 }), 0, 1.0, 0));
+    for (let i = 0; i < 3; i++) {                        // trojnožka
+      const a = i * Math.PI * 2 / 3 + 0.5, leg = mesh(geo('snLeg', () => new T.CylinderGeometry(0.05, 0.05, 1.2, 6)), std(0x475569, { metalness: 0.6, roughness: 0.4 }), Math.cos(a) * 0.62, 0.8, Math.sin(a) * 0.62);
+      leg.rotation.set(Math.sin(a) * 0.35, 0, -Math.cos(a) * 0.35); g.add(leg);
+    }
+    head.position.y = 2.5;
+    head.add(mesh(geo('snHead', () => new T.BoxGeometry(0.7, 0.55, 1.0)), std(0x0f172a, { roughness: 0.4, metalness: 0.5 }), 0, 0, 0));
+    kickBase = 1.15;
+    kick = mesh(geo('snBarrel', () => new T.CylinderGeometry(0.09, 0.13, 2.3, 10).rotateX(Math.PI / 2)), std(0x334155, { metalness: 0.8, roughness: 0.3 }), 0, 0.02, kickBase);
+    kick.add(mesh(geo('snMuzzle', () => new T.CylinderGeometry(0.17, 0.17, 0.25, 10).rotateX(Math.PI / 2)), std(0x111827, { metalness: 0.7, roughness: 0.4 }), 0, 0, 1.1));
+    head.add(kick);
+    head.add(mesh(geo('snScope', () => new T.CylinderGeometry(0.1, 0.1, 0.8, 10).rotateX(Math.PI / 2)), std(0x1f2937, { metalness: 0.6, roughness: 0.4 }), 0, 0.42, 0.25));
+    head.add(mesh(geo('snLens', () => new T.CircleGeometry(0.085, 12)), basicMat(0xff4d4d), 0, 0.42, 0.66, false));
+    muzzle.position.set(0, 0.02, 2.4); head.add(muzzle);
+  } else if (type === 'poison') {
+    g.add(mesh(geo('pnBody', () => new T.CylinderGeometry(0.55, 0.88, 1.2, 12)), std(0x4d7c0f, { roughness: 0.5, metalness: 0.2 }), 0, 0.95, 0));
+    g.add(mesh(geo('pnRing', () => new T.TorusGeometry(0.72, 0.07, 8, 22).rotateX(Math.PI / 2)), std(0xa3e635, { emissive: 0x65a30d, emissiveIntensity: 0.6, metalness: 0.4, roughness: 0.3 }), 0, 1.45, 0));
+    head.position.y = 2.15;
+    crystal = mesh(geo('pnFlask', () => new T.SphereGeometry(0.62, 20, 16)), std(0xbef264, { emissive: 0x84cc16, emissiveIntensity: 0.7, roughness: 0.15, transparent: true, opacity: 0.88 }), 0, 0, 0, false);
+    head.add(crystal);
+    head.add(mesh(geo('pnNeck', () => new T.CylinderGeometry(0.2, 0.26, 0.5, 12)), std(0xd9f99d, { roughness: 0.2, transparent: true, opacity: 0.9 }), 0, 0.72, 0, false));
+    head.add(mesh(geo('pnCork', () => new T.CylinderGeometry(0.2, 0.17, 0.2, 10)), std(0x7c4a21, { roughness: 0.9 }), 0, 1.04, 0));
+    orbit = new T.Group();
+    for (let i = 0; i < 3; i++) {                        // bublinky
+      const a = i * Math.PI * 2 / 3;
+      orbit.add(mesh(geo('pnBubble', () => new T.SphereGeometry(0.12, 10, 8)), std(0xecfccb, { emissive: 0x84cc16, emissiveIntensity: 0.6, transparent: true, opacity: 0.85 }), Math.cos(a) * 0.9, 0.1 + i * 0.12, Math.sin(a) * 0.9, false));
+    }
+    head.add(orbit);
+    muzzle.position.set(0, 1.1, 0); head.add(muzzle);
+  } else if (type === 'vortex') {
+    g.add(mesh(geo('vxBody', () => new T.CylinderGeometry(0.4, 0.8, 1.6, 8)), std(0x3b0764, { roughness: 0.4, metalness: 0.5 }), 0, 1.2, 0));
+    for (let i = 0; i < 3; i++) {
+      const c = mesh(geo('vxCoil', () => new T.TorusGeometry(0.55, 0.06, 8, 20).rotateX(Math.PI / 2)), std(0xc084fc, { emissive: 0x9333ea, emissiveIntensity: 0.8, metalness: 0.5, roughness: 0.3 }), 0, 0.7 + i * 0.45, 0, false);
+      c.scale.setScalar(1.2 - i * 0.2); g.add(c);
+    }
+    head.position.y = 2.7;
+    crystal = mesh(geo('vxCore', () => new T.TorusKnotGeometry(0.32, 0.1, 48, 8)), std(0xe9d5ff, { emissive: 0xa855f7, emissiveIntensity: 1, roughness: 0.2 }), 0, 0, 0, false);
+    head.add(crystal);
+    orbit = new T.Group();
+    for (let i = 0; i < 2; i++) {
+      const ring = mesh(geo('vxRing', () => new T.TorusGeometry(0.85, 0.045, 8, 28)), std(0xc084fc, { emissive: 0xa855f7, emissiveIntensity: 0.9, roughness: 0.3 }), 0, 0, 0, false);
+      ring.rotation.set(i ? Math.PI / 2.4 : -Math.PI / 2.4, i ? 0.9 : 0, 0); orbit.add(ring);
+    }
+    head.add(orbit); head.add(muzzle);
+  } else if (type === 'factory') {
+    g.add(mesh(geo('fcHall', () => new T.BoxGeometry(1.7, 1.2, 1.5)), std(0x475569, { roughness: 0.6, metalness: 0.3 }), 0, 1.0, 0));
+    g.add(mesh(geo('fcRoof', () => new T.BoxGeometry(1.9, 0.18, 1.7)), std(0x0f172a, { roughness: 0.5, metalness: 0.4 }), 0, 1.69, 0));
+    g.add(mesh(geo('fcDoor', () => new T.BoxGeometry(0.9, 0.8, 0.06)), std(0xf59e0b, { roughness: 0.4, metalness: 0.5 }), 0, 0.8, 0.77));
+    g.add(mesh(geo('fcStripe', () => new T.BoxGeometry(1.75, 0.12, 1.55)), std(0x22d3ee, { emissive: 0x0891b2, emissiveIntensity: 0.7 }), 0, 1.4, 0, false));
+    for (const s of [-1, 1]) g.add(mesh(geo('fcChim', () => new T.CylinderGeometry(0.14, 0.18, 0.7, 8)), std(0x334155, { metalness: 0.6 }), s * 0.6, 2.1, -0.4));
+    g.add(mesh(geo('fcPole', () => new T.CylinderGeometry(0.1, 0.14, 0.4, 8)), std(0x64748b, { metalness: 0.6 }), 0, 1.98, 0.2));
+    head.position.y = 2.45;
+    head.add(mesh(geo('fcHead', () => new T.BoxGeometry(0.55, 0.42, 0.5)), std(0x94a3b8, { metalness: 0.6, roughness: 0.35 }), 0, 0, 0));
+    head.add(mesh(geo('fcVisor', () => new T.BoxGeometry(0.42, 0.1, 0.05)), basicMat(0x67e8f9), 0, 0.04, 0.26, false));
+    head.add(mesh(geo('fcAnt', () => new T.CylinderGeometry(0.03, 0.03, 0.4, 6)), std(0xe2e8f0), 0, 0.4, 0));
+    orbit = new T.Group();
+    orbit.add(mesh(geo('fcGear', () => new T.TorusGeometry(0.62, 0.05, 6, 24).rotateX(Math.PI / 2)), std(0x22d3ee, { emissive: 0x0891b2, emissiveIntensity: 0.7, roughness: 0.3 }), 0, 0, 0, false));
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI / 3;
+      orbit.add(mesh(geo('fcTooth', () => new T.BoxGeometry(0.14, 0.1, 0.14)), std(0x22d3ee, { emissive: 0x0891b2, emissiveIntensity: 0.7 }), Math.cos(a) * 0.66, 0, Math.sin(a) * 0.66, false));
+    }
+    head.add(orbit); muzzle.position.set(0, 0, 0); head.add(muzzle);
+  } else { // ice
+    g.add(mesh(geo('iBody', () => new T.CylinderGeometry(0.45, 0.8, 1.6, 6)), std(0xa5e8f7, { roughness: 0.2, metalness: 0.2, flatShading: true }), 0, 1.2, 0));
+    head.position.y = 2.5;
+    const iceMat = std(0x7dd3fc, { emissive: 0x38bdf8, emissiveIntensity: 0.55, roughness: 0.15, metalness: 0.2, flatShading: true });
+    crystal = mesh(geo('iCrystal', () => new T.IcosahedronGeometry(0.55, 0)), iceMat, 0, 0, 0);
+    crystal.scale.set(0.8, 1.3, 0.8); head.add(crystal);
+    orbit = new T.Group();
+    for (let i = 0; i < 3; i++) {
+      const a = i * Math.PI * 2 / 3;
+      orbit.add(mesh(geo('iShard', () => new T.ConeGeometry(0.14, 0.5, 5)), iceMat, Math.cos(a) * 0.95, Math.sin(i * 2) * 0.2, Math.sin(a) * 0.95));
+    }
+    head.add(orbit); head.add(muzzle);
+  }
+  g.add(head);
+  return { group: g, head, kick, kickBase, muzzle, orbit, crystal };
+}
+
+function updatePips(t) {
+  while (t.pips.children.length) t.pips.remove(t.pips.children[0]);
+  for (let i = 0; i < t.level - 1; i++) {
+    const a = (i - 1) * 0.7 + Math.PI / 2;
+    t.pips.add(mesh(geo('pip', () => new T.SphereGeometry(0.11, 10, 8)), goldMat, Math.cos(a) * 1.05, 0.42, Math.sin(a) * 1.05, false));
+  }
+}
+
+function createTower(type, c, r) {
+  const cfg = TOWER_TYPES[type], b = buildTower(type), pos = gridToWorld(c, r);
+  b.group.position.copy(pos); scene.add(b.group);
+  const t = {
+    type, cfg, level: 1, c, r, pos, group: b.group, head: b.head, kick: b.kick, kickBase: b.kickBase,
+    muzzle: b.muzzle, orbit: b.orbit, crystal: b.crystal, pips: new T.Group(),
+    damage: cfg.damage, range: cfg.range, rate: cfg.rate, aoe: cfg.aoe || 0, slowF: cfg.slowFactor || 1, slowT: cfg.slowTime || 0,
+    burnDps: cfg.burnDps || 0, burnT: cfg.burnTime || 0, cone: cfg.cone || 0,
+    cd: 0.2, spent: cfg.cost, mode: 'first', recoil: 0, appear: 0, headBase: 1,
+    chain: cfg.chain || 0, jump: cfg.jump || 0, aura: cfg.aura || 0, push: cfg.push || 0, poisonDps: cfg.poisonDps || 0, poisonT: cfg.poisonTime || 0, bossMul: cfg.bossMul || 1, haste: 1, shielded: false, stunT: 0, stunImm: 0, blockCd: 0, pulseCd: 0, stunFx: null, unitCd: 3, mechCd: 3
+  };
+  b.group.add(t.pips);
+  // Efekt omráčení (skrytý, dokud věž není omráčená)
+  {
+    const sf = new T.Group(); sf.position.y = TOP[type]; sf.visible = false;
+    const ring = new T.Mesh(geo('stRing', () => new T.TorusGeometry(0.6, 0.06, 6, 20).rotateX(Math.PI / 2)), electricMat); sf.add(ring);
+    for (let i = 0; i < 3; i++) {
+      const a = i * Math.PI * 2 / 3, sp = new T.Mesh(geo('stSpark', () => new T.OctahedronGeometry(0.16, 0)), electricMat);
+      sp.position.set(Math.cos(a) * 0.6, 0.2 + (i % 2) * 0.25, Math.sin(a) * 0.6); sf.add(sp);
+    }
+    b.group.add(sf); t.stunFx = sf;
+  }
+  b.group.userData.tower = t;
+  b.group.scale.setScalar(0.001);
+  towerGrid.set(key(c, r), t); towers.push(t);
+  ringFx(pos, 0xffffff, 2.6, 0.45);
+  sfx('build');
+  return t;
+}
+
+const upgradeCost = t => Math.round(t.cfg.cost * (0.5 + 0.4 * (t.level - 1)) * (t.cfg.upgMul || 1));   // továrna má vylepšení 2,6× dražší
+const sellValue = t => Math.floor(t.spent * CFG.SELL_RATIO);
+const MODES = { first: 'První', last: 'Poslední', strong: 'Nejsilnější' };
+
+function upgradeTower(t) {
+  if (!t || t.level >= CFG.MAX_LEVEL) return;
+  const cost = upgradeCost(t);
+  if (money < cost) { toast('Nedostatek peněz!'); sfx('err'); return; }
+  setMoney(money - cost); t.spent += cost; t.level++;
+  t.range *= 1.07;
+  if (t.type === 'beacon') t.aura += 0.1;           // maják nestřílí, roste mu bonus rychlosti
+  else if (t.type === 'factory') { if (t.level === 3) t.mechCd = 1.5; }   // továrna: síla jednotek roste s úrovní, od 3. úrovně přibude mech
+  else {
+    t.damage = Math.round(t.damage * 1.55 * 100) / 100;
+    if (t.type !== 'flame') t.rate *= 0.9;          // plamenomet má pevný takt, roste mu poškození a podpal
+  }
+  if (t.type === 'tesla' && (t.level === 2 || t.level === 4)) t.chain++;
+  if (t.type === 'flame') t.burnDps = Math.round(t.burnDps * 1.55 * 100) / 100;
+  if (t.type === 'cannon') t.aoe *= 1.08;
+  if (t.type === 'ice') { t.slowF = Math.max(0.2, t.slowF * 0.85); t.slowT += 0.5; }
+  if (t.type === 'poison') { t.poisonDps = Math.round(t.poisonDps * 1.55 * 100) / 100; t.poisonT += 0.5; }
+  if (t.type === 'vortex') t.push *= 1.18;
+  t.headBase = 1 + 0.07 * (t.level - 1);
+  if (t.type !== 'ice') t.head.scale.setScalar(t.headBase); else t.head.scale.setScalar(t.headBase);
+  updatePips(t);
+  ringFx(t.pos, 0xfacc15, 3.2, 0.5);
+  sfx('up');
+  if (t.cfg.factory) rangeSel.visible = false; else setRange(rangeSel, t.pos, t.range, t.cfg.ring);
+  refreshPanel();
+}
+
+function sellTower(t) {
+  if (!t) return;
+  const v = sellValue(t);
+  scene.remove(t.group); disposeObject(t.group);
+  for (const u of units) if (u.owner === t) u.alive = false;     // jednotky prodané továrny zmizí
+  towerGrid.delete(key(t.c, t.r));
+  towers = towers.filter(x => x !== t);
+  popText(t.pos, '+' + v, 'text-amber-300');
+  ringFx(t.pos, 0xfbbf24, 2.4, 0.4);
+  deselectTower();
+  setMoney(money + v);
+  sfx('up');
+}
+
+/* =====================================================================
+ *  VIZUÁLNÍ POMŮCKY: dosah, zvýraznění dlaždice, ghost věže
+ * ===================================================================== */
+function makeRange() {
+  const g = new T.Group();
+  const disc = new T.Mesh(geo('rDisc', () => new T.CircleGeometry(1, 64).rotateX(-Math.PI / 2)), new T.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.14, depthWrite: false }));
+  const ring = new T.Mesh(geo('rRing', () => new T.RingGeometry(0.975, 1, 64).rotateX(-Math.PI / 2)), new T.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false }));
+  g.add(disc, ring); g.visible = false; g.userData = { disc, ring }; scene.add(g); return g;
+}
+function setRange(ind, pos, r, color) {
+  ind.position.set(pos.x, 0.06, pos.z); ind.scale.set(r, 1, r);
+  ind.userData.disc.material.color.setHex(color); ind.userData.ring.material.color.setHex(color); ind.visible = true;
+}
+const rangeHover = makeRange(), rangeSel = makeRange();
+const tileHL = new T.Mesh(new T.PlaneGeometry(TILE * 0.96, TILE * 0.96).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ color: 0x22c55e, transparent: true, opacity: 0.5, depthWrite: false }));
+tileHL.position.y = 0.04; tileHL.visible = false; scene.add(tileHL);
+let ghost = null;
+
+function rebuildGhost() {
+  if (ghost) { scene.remove(ghost); disposeObject(ghost); ghost = null; }
+  if (!placingType) return;
+  ghost = buildTower(placingType).group;
+  ghost.traverse(o => { if (o.isMesh) { o.castShadow = false; o.material.transparent = true; o.material.opacity = 0.6; } });
+  ghost.visible = false; scene.add(ghost);
+}
+
+function updateHover() {
+  const canShow = state === 'playing' && placingType && hoverCell && inBounds(hoverCell.c, hoverCell.r);
+  if (canShow) {
+    const cfg = TOWER_TYPES[placingType], p = gridToWorld(hoverCell.c, hoverCell.r);
+    const ok = isBuildable(hoverCell.c, hoverCell.r) && money >= cfg.cost;
+    tileHL.position.set(p.x, 0.04, p.z); tileHL.material.color.setHex(ok ? 0x22c55e : 0xef4444); tileHL.visible = true;
+    setRange(rangeHover, p, cfg.range, ok ? cfg.ring : 0xef4444);
+    if (ghost) { ghost.position.copy(p); ghost.visible = true; }
+  } else {
+    tileHL.visible = false; rangeHover.visible = false; if (ghost) ghost.visible = false;
+  }
+}
+
+/* =====================================================================
+ *  VÝBĚR / STAVĚNÍ / PANEL VĚŽE
+ * ===================================================================== */
+function selectShop(type) {
+  cancelArmed();
+  if (state !== 'playing') return;
+  if (placingType === type) { cancelPlacing(); return; }
+  placingType = type; deselectTower(); rebuildGhost(); refreshShop(); updateHover();
+}
+function cancelPlacing() { placingType = null; rebuildGhost(); refreshShop(); updateHover(); }
+
+function selectTower(t) {
+  placingType = null; rebuildGhost(); refreshShop(); updateHover();
+  selectedTower = t;
+  if (t.cfg.factory) rangeSel.visible = false; else setRange(rangeSel, t.pos, t.range, t.cfg.ring);
+  // Panel zobrazíme na opačné straně obrazovky než věž
+  _pv.copy(t.pos); _pv.y = 1; _pv.project(camera);
+  const sx = (_pv.x * 0.5 + 0.5) * window.innerWidth, p = $('towerPanel');
+  if (sx > window.innerWidth / 2) { p.style.left = '12px'; p.style.right = 'auto'; } else { p.style.right = '12px'; p.style.left = 'auto'; }
+  refreshPanel();
+}
+function deselectTower() { selectedTower = null; rangeSel.visible = false; $('towerPanel').classList.add('hidden'); }
+
+function refreshPanel() {
+  const t = selectedTower, p = $('towerPanel');
+  if (!t) { p.classList.add('hidden'); return; }
+  p.classList.remove('hidden');
+  $('tpIcon').textContent = t.cfg.icon; $('tpName').textContent = t.cfg.name;
+  $('tpLevel').textContent = `Úroveň ${t.level}/${CFG.MAX_LEVEL}`;
+  const rows = [['Poškození', fmt(t.damage)], ['Dosah', (t.range / TILE).toFixed(1) + ' dl.'], ['Rychlost', (1 / t.rate).toFixed(1) + ' / s']];
+  if (t.type === 'cannon') rows.push(['Výbuch', (t.aoe / TILE).toFixed(1) + ' dl.']);
+  if (t.type === 'flame') { rows[0] = ['Poškození/s', fmt(t.damage / t.rate)]; rows[2] = ['Podpal', fmt(t.burnDps) + ' / s']; }
+  if (t.type === 'ice') rows.push(['Zpomalení', Math.round((1 - t.slowF) * 100) + ' % / ' + t.slowT.toFixed(1) + ' s']);
+  if (t.type === 'tesla') rows.push(['Řetěz', t.chain + ' cílů']);
+  if (t.type === 'sniper') rows.push(['Proti bossům', '+' + Math.round((t.bossMul - 1) * 100) + ' %']);
+  if (t.type === 'poison') rows.push(['Jed', fmt(t.poisonDps) + ' / s · ' + t.poisonT.toFixed(1) + ' s'], ['Oblak', (t.aoe / TILE).toFixed(1) + ' dl.']);
+  if (t.type === 'vortex') { rows[2] = ['Perioda', t.rate.toFixed(1) + ' s']; rows.push(['Odhození', (t.push / TILE).toFixed(1) + ' dl.']); }
+  if (t.cfg.factory) {
+    const s = factoryStats(t), cnt = k => units.filter(u => u.owner === t && u.alive && u.kind === k).length;
+    rows.length = 0;
+    rows.push(['🤖 Roboti', `${cnt('robot')}/${s.maxR} · nový za ${s.rInt.toFixed(1)} s`], ['Robot', `${s.rHp} HP · ${fmt(s.rDmg / s.rRate)} dmg/s`]);
+    if (t.level >= 3) rows.push(['🦾 Mechové', `${cnt('mech')}/${s.maxM} · nový za ${s.mInt} s`], ['Mech', `${s.mHp} HP · ${fmt(s.mDmg)} výbuch`]);
+    else rows.push(['🦾 Mech', 'odemkne se na úrovni 3']);
+  }
+  if (t.cfg.support) { rows.length = 0; rows.push(['Dosah', (t.range / TILE).toFixed(1) + ' dl.'], ['Rychlost věží', '+' + Math.round(t.aura * 100) + ' %'], ['Ochrana', 'proti omráčení']); }
+  $('tpStats').innerHTML = rows.map(([a, b]) => `<div class="flex justify-between"><span class="text-slate-300">${a}</span><b>${b}</b></div>`).join('');
+  const up = $('btnUpgrade');
+  if (t.level >= CFG.MAX_LEVEL) { up.textContent = '✔ Max. úroveň'; up.disabled = true; $('tpNext').textContent = ''; }
+  else {
+    const cost = upgradeCost(t);
+    up.innerHTML = `⬆ Vylepšit <span class="ml-1">🪙${cost}</span>`; up.disabled = money < cost;
+    const nl = t.level + 1;
+    $('tpNext').textContent = t.type === 'factory' ? (nl === 3 ? '🦾 Odemkne MECHY (až 2, 700 HP, výbušné rakety) · silnější roboti' : nl === 4 ? '+2 mechové (max. 4) · silnější mech i roboti · rychlejší výroba' : '+2 roboti · silnější a odolnější roboti · rychlejší výroba')
+      : t.type === 'beacon' ? '+10 % rychlost věží v dosahu · +7 % dosah'
+      : t.type === 'flame' ? '+55 % poškození · +55 % podpal · +7 % dosah'
+      : t.type === 'poison' ? '+55 % poškození · +55 % jed · +0,5 s otrava · +7 % dosah'
+      : t.type === 'vortex' ? '+55 % poškození · +18 % odhození · +7 % dosah · rychlejší pulz'
+      : '+55 % poškození · +7 % dosah · +11 % rychlost' + (t.type === 'tesla' && (nl === 2 || nl === 4) ? ' · +1 cíl řetězu' : '');
+  }
+  $('btnSell').innerHTML = `💰 Prodat <span class="ml-1">+${sellValue(t)}</span>`;
+  $('btnTarget').textContent = `🎯 Cíl: ${MODES[t.mode]}`;
+  $('btnTarget').classList.toggle('hidden', !!t.cfg.support || !!t.cfg.factory);
+}
+
+function tryPlace(c, r, keep) {
+  const cfg = TOWER_TYPES[placingType];
+  if (!isBuildable(c, r)) { toast('Tady nelze stavět'); sfx('err'); return; }
+  if (money < cfg.cost) { toast('Nedostatek peněz!'); sfx('err'); return; }
+  createTower(placingType, c, r);
+  setMoney(money - cfg.cost);
+  if (!keep) cancelPlacing(); else updateHover();
+}
+
+/* =====================================================================
+ *  NEPŘÁTELÉ
+ * ===================================================================== */
+function buildEnemy(type) {
+  const root = new T.Group(), body = new T.Group(), mats = [];
+  root.add(body);
+  const S = (color, o) => { const m = std(color, o); mats.push(m); return m; };
+  const white = sharedMat(basicMat(0xffffff, { transparent: true, opacity: 0.75 }));
+  if (type === 'red') {
+    const b = mesh(geo('balloon', () => new T.SphereGeometry(0.55, 20, 16)), S(0xe53935, { roughness: 0.25 }), 0, 0, 0); b.scale.set(1, 1.18, 1);
+    const knot = mesh(geo('knot', () => new T.ConeGeometry(0.13, 0.22, 8)), S(0xb71c1c), 0, -0.72, 0); knot.rotation.x = Math.PI;
+    const shine = new T.Mesh(geo('shine', () => new T.SphereGeometry(0.12, 8, 6)), white); shine.position.set(-0.22, 0.3, 0.38);
+    body.add(b, knot, shine);
+  } else if (type === 'green') {
+    const b = mesh(geo('gBody', () => new T.SphereGeometry(0.42, 18, 14)), S(0x43a047, { roughness: 0.25 }), 0, 0, 0); b.scale.set(0.9, 1, 1.5);
+    const tail = mesh(geo('gTail', () => new T.ConeGeometry(0.2, 0.6, 8)), S(0x2e7d32), 0, 0, -0.9); tail.rotation.x = -Math.PI / 2;
+    const fin = mesh(geo('gFin', () => new T.ConeGeometry(0.12, 0.35, 6)), S(0x1b5e20), 0, 0.5, -0.1);
+    const shine = new T.Mesh(geo('shine', () => new T.SphereGeometry(0.12, 8, 6)), white); shine.position.set(-0.2, 0.25, 0.4); shine.scale.setScalar(0.8);
+    body.add(b, tail, fin, shine);
+  } else if (type === 'ghost') {
+    const gm = () => S(0xc4b5fd, { roughness: 0.3, transparent: true, opacity: 0.72 });
+    body.add(mesh(geo('ghHead', () => new T.SphereGeometry(0.55, 18, 14)), gm(), 0, 0.1, 0, false));
+    const skirt = mesh(geo('ghSkirt', () => new T.ConeGeometry(0.55, 0.9, 14)), gm(), 0, -0.45, 0, false); skirt.rotation.x = Math.PI; body.add(skirt);
+    for (const s of [-1, 1]) body.add(mesh(geo('eye', () => new T.SphereGeometry(0.11, 10, 8)), eyeBlack, s * 0.2, 0.22, 0.46, false));
+  } else if (type === 'healer') {
+    const b = mesh(geo('hBody', () => new T.SphereGeometry(0.65, 20, 16)), S(0xf472b6, { roughness: 0.25 }), 0, 0, 0); b.scale.set(1, 1.15, 1); body.add(b);
+    const knot = mesh(geo('knot', () => new T.ConeGeometry(0.13, 0.22, 8)), S(0xbe185d), 0, -0.86, 0); knot.rotation.x = Math.PI; body.add(knot);
+    for (const z of [0.62, -0.62]) body.add(
+      mesh(geo('crossH', () => new T.BoxGeometry(0.42, 0.13, 0.06)), eyeWhite, 0, 0.05, z, false),
+      mesh(geo('crossV', () => new T.BoxGeometry(0.13, 0.42, 0.06)), eyeWhite, 0, 0.05, z, false));
+  } else if (type === 'splitter') {
+    body.add(mesh(geo('spBody', () => new T.SphereGeometry(0.62, 20, 16)), S(0xff9800, { roughness: 0.3 }), 0, 0, 0));
+    body.add(mesh(geo('spBand', () => new T.TorusGeometry(0.62, 0.07, 8, 24).rotateX(Math.PI / 2)), S(0x7c2d12, { roughness: 0.5 }), 0, 0, 0));
+    for (let i = 0; i < 3; i++) {
+      const a = i * Math.PI * 2 / 3;
+      body.add(mesh(geo('spMini', () => new T.SphereGeometry(0.3, 12, 10)), S(0xe53935, { roughness: 0.3 }), Math.cos(a) * 0.52, -0.12, Math.sin(a) * 0.52));
+    }
+  } else if (type === 'boss') {
+    body.add(mesh(geo('bsBody', () => new T.SphereGeometry(1.5, 26, 20)), S(0x3b0764, { metalness: 0.6, roughness: 0.35 }), 0, 0, 0));
+    body.add(mesh(geo('bsBelt', () => new T.TorusGeometry(1.5, 0.14, 10, 32).rotateX(Math.PI / 2)), S(0xfbbf24, { metalness: 0.8, roughness: 0.3 }), 0, -0.2, 0));
+    for (let i = 0; i < 7; i++) {
+      const a = i * Math.PI * 2 / 7;
+      const c = mesh(geo('bsCrown', () => new T.ConeGeometry(0.2, 0.7, 6)), S(0xfbbf24, { metalness: 0.8, roughness: 0.3 }), Math.cos(a) * 0.8, 1.5, Math.sin(a) * 0.8);
+      c.rotation.set(Math.sin(a) * 0.35, 0, -Math.cos(a) * 0.35); body.add(c);
+    }
+    for (const s of [-1, 1]) {
+      body.add(mesh(geo('bsEye', () => new T.SphereGeometry(0.2, 12, 10)), eyeRed, s * 0.5, 0.35, 1.35, false));
+      const horn = mesh(geo('bsHorn', () => new T.ConeGeometry(0.22, 0.9, 8)), S(0xe5e7eb, { roughness: 0.4 }), s * 1.25, 0.95, 0); horn.rotation.z = -s * 0.8; body.add(horn);
+    }
+  } else if (type === 'shocker') {
+    body.add(mesh(geo('shBody', () => new T.SphereGeometry(0.62, 20, 16)), S(0x1e3a8a, { roughness: 0.3, metalness: 0.3 }), 0, 0, 0));
+    const ring = mesh(geo('shRing', () => new T.TorusGeometry(0.9, 0.06, 8, 28)), electricMat, 0, 0, 0, false); body.add(ring); body.userData.spin = ring;
+    for (const s of [-1, 1]) {
+      const ant = mesh(geo('shAnt', () => new T.CylinderGeometry(0.03, 0.03, 0.5, 6)), S(0x94a3b8, { metalness: 0.7, roughness: 0.4 }), s * 0.3, 0.78, 0); ant.rotation.z = -s * 0.35; body.add(ant);
+      body.add(mesh(geo('shTip', () => new T.SphereGeometry(0.1, 8, 6)), electricMat, s * 0.43, 1.02, 0, false));
+      body.add(mesh(geo('eye', () => new T.SphereGeometry(0.11, 10, 8)), electricMat, s * 0.22, 0.12, 0.54, false));
+    }
+  } else if (type === 'jammer') {
+    body.add(mesh(geo('jmBody', () => new T.IcosahedronGeometry(0.85, 1)), S(0x115e59, { roughness: 0.35, metalness: 0.5, flatShading: true }), 0, 0, 0));
+    const ring = mesh(geo('jmRing', () => new T.TorusGeometry(1.2, 0.07, 8, 32)), magentaMat, 0, 0, 0, false); body.add(ring); body.userData.spin = ring;
+    for (let i = 0; i < 3; i++) {
+      const a = i * Math.PI * 2 / 3, px = Math.cos(a), pz = Math.sin(a);
+      const prong = mesh(geo('jmProng', () => new T.ConeGeometry(0.12, 0.7, 6)), S(0x0f766e, { metalness: 0.6, roughness: 0.4 }), px * 0.5, 0.95, pz * 0.5);
+      prong.rotation.set(pz * 0.4, 0, -px * 0.4); body.add(prong);
+      body.add(mesh(geo('jmTip', () => new T.SphereGeometry(0.1, 8, 6)), magentaMat, px * 0.68, 1.35, pz * 0.68, false));
+    }
+    body.add(mesh(geo('jmEye', () => new T.SphereGeometry(0.24, 12, 10)), eyeWhite, 0, 0.12, 0.76, false));
+    body.add(mesh(geo('pupil', () => new T.SphereGeometry(0.055, 8, 6)), magentaMat, 0, 0.12, 0.99, false));
+  } else if (type === 'warlord') {
+    body.add(mesh(geo('wlBody', () => new T.SphereGeometry(1.5, 26, 20)), S(0x7f1d1d, { metalness: 0.6, roughness: 0.35 }), 0, 0, 0));
+    const r1 = mesh(geo('wlRing1', () => new T.TorusGeometry(2.0, 0.1, 8, 40)), electricMat, 0, 0, 0, false); body.add(r1); body.userData.spin = r1;
+    body.add(mesh(geo('wlRing2', () => new T.TorusGeometry(1.52, 0.1, 8, 36).rotateX(Math.PI / 2)), S(0xfbbf24, { metalness: 0.8, roughness: 0.3 }), 0, -0.15, 0));
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI * 2 / 6, px = Math.cos(a), pz = Math.sin(a);
+      const rod = mesh(geo('wlRod', () => new T.ConeGeometry(0.17, 0.9, 6)), S(0x374151, { metalness: 0.7, roughness: 0.4 }), px * 0.85, 1.55, pz * 0.85);
+      rod.rotation.set(pz * 0.35, 0, -px * 0.35); body.add(rod);
+      body.add(mesh(geo('wlTip', () => new T.SphereGeometry(0.13, 8, 6)), electricMat, px * 1.03, 2.05, pz * 1.03, false));
+    }
+    for (const s of [-1, 1]) body.add(mesh(geo('wlEye', () => new T.SphereGeometry(0.22, 12, 10)), electricMat, s * 0.5, 0.35, 1.35, false));
+  } else {
+    const gold = () => S(0xfbbf24, { metalness: 0.8, roughness: 0.3 });
+    body.add(mesh(geo('aBody', () => new T.SphereGeometry(0.95, 22, 16)), S(0x6b7889, { metalness: 0.8, roughness: 0.35 }), 0, 0, 0));
+    body.add(mesh(geo('aBand', () => new T.TorusGeometry(0.95, 0.1, 10, 28).rotateX(Math.PI / 2)), gold(), 0, 0, 0));
+    body.add(mesh(geo('aBand2', () => new T.TorusGeometry(0.95, 0.08, 10, 28)), gold(), 0, 0, 0));
+    for (let i = 0; i < 8; i++) {
+      const a = i * Math.PI / 4, spike = mesh(geo('aSpike', () => new T.ConeGeometry(0.16, 0.5, 6)), S(0x374151, { metalness: 0.7, roughness: 0.4 }), 0, 0, 0);
+      const dir = new T.Vector3(Math.cos(a), 0.15, Math.sin(a)).normalize();
+      spike.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), dir); spike.position.copy(dir).multiplyScalar(1.0); body.add(spike);
+    }
+    for (const s of [-1, 1]) body.add(mesh(geo('aEye', () => new T.SphereGeometry(0.12, 10, 8)), basicMat(0xff3b3b), s * 0.3, 0.2, 0.86, false));
+  }
+  return { root, body, mats };
+}
+
+const _v1 = new T.Vector3(), _v2 = new T.Vector3(), _v3 = new T.Vector3();
+
+function spawnEnemy(type, hpMul, startDist = 0, instant = false) {
+  const def = ENEMY_TYPES[type], b = buildEnemy(type);
+  const e = {
+    type, def, root: b.root, body: b.body, mats: b.mats, hp: def.hp * hpMul, maxHp: def.hp * hpMul, hpMul, dist: startDist, speed: def.speed * MODE.speedMul * (MODE.infinite ? Math.min(1.45, 1 + 0.01 * Math.max(0, wave - 1)) : 1), burnT: 0, burnDps: 0, poisonT: 0, poisonDps: 0, healCd: 1 + Math.random(),
+    slowT: 0, slowF: 1, alive: true, pos: new T.Vector3(), aim: new T.Vector3(), dir: new T.Vector3(), bar: null, phase: Math.random() * 6.28, born: instant ? 1 : 0, stunCd: def.stun ? def.stun.every * 0.5 : 0
+  };
+  posOnPath(startDist, e.pos, e.dir);
+  b.body.position.y = def.center; b.body.rotation.y = Math.atan2(e.dir.x, e.dir.z);
+  b.root.position.copy(e.pos); b.root.scale.setScalar(instant ? 1 : 0.01);
+  e.aim.set(e.pos.x, def.center, e.pos.z);
+  scene.add(b.root); enemies.push(e);
+}
+
+function ensureBar(e) {
+  if (e.bar) return;
+  const w = e.def.radius * 2, bar = new T.Group();
+  const back = new T.Mesh(geo('barPlane', () => new T.PlaneGeometry(1, 1)), new T.MeshBasicMaterial({ color: 0x000000, depthTest: false, depthWrite: false, transparent: true, opacity: 0.9, fog: false }));
+  back.scale.set(w + 0.1, 0.2, 1); back.renderOrder = 10;
+  const fill = new T.Mesh(geo('barFill', () => new T.PlaneGeometry(1, 1).translate(0.5, 0, 0)), new T.MeshBasicMaterial({ color: 0xff7b7b, depthTest: false, depthWrite: false, transparent: true, fog: false }));   // musí být průhledná, jinak se vykreslí PŘED černým pozadím a to ji přebarví
+  fill.position.set(-w / 2, 0, 0.01); fill.scale.set(w, 0.14, 1); fill.renderOrder = 11;
+  bar.add(back, fill); bar.position.y = e.def.center + e.def.radius + 0.55;
+  e.root.add(bar); e.bar = bar; e.fill = fill; e.barW = w;
+}
+function updateBar(e) {
+  ensureBar(e);
+  const k = clamp(e.hp / e.maxHp, 0, 1);
+  e.fill.scale.x = Math.max(0.001, e.barW * k);
+}
+
+/** Barva podle stavu: oranžová = hoří, modrá = zpomalený */
+function refreshTint(e) {
+  const burn = e.burnT > 0, pois = e.poisonT > 0, slow = e.slowT > 0;
+  for (const m of e.mats) {
+    m.emissive.setHex(burn ? 0xff5a00 : pois ? 0x65a30d : slow ? 0x2ea8ff : 0x000000);
+    m.emissiveIntensity = burn ? 0.75 : pois ? 0.6 : slow ? 0.55 : 1;
+  }
+}
+function applyPoison(e, dps, dur) {
+  if (!e.alive) return;
+  const was = e.poisonT > 0;
+  e.poisonDps = Math.max(e.poisonDps, dps); e.poisonT = Math.max(e.poisonT, dur);
+  if (!was) refreshTint(e);
+}
+function applySlow(e, factor, dur) {
+  if (!e.alive || e.def.slowImmune) return;          // duchové jsou imunní vůči zpomalení
+  const was = e.slowT > 0;
+  if (!was) e.slowF = 1;
+  e.slowF = Math.min(e.slowF, factor); e.slowT = Math.max(e.slowT, dur);
+  if (!was) refreshTint(e);
+}
+function applyBurn(e, dps, dur) {
+  if (!e.alive) return;
+  const was = e.burnT > 0;
+  e.burnDps = Math.max(e.burnDps, dps); e.burnT = Math.max(e.burnT, dur);
+  if (!was) refreshTint(e);
+}
+
+function damageEnemy(e, dmg, ignoreArmor = false) {
+  if (!e.alive) return;
+  e.hp -= ignoreArmor ? dmg : Math.max(dmg - e.def.armor, dmg * 0.25);   // pancíř snižuje poškození slabých zásahů
+  if (e.hp <= 0) killEnemy(e); else updateBar(e);
+}
+const ENEMY_COLORS = { red: 0xef4444, green: 0x4ade80, armored: 0x94a3b8, ghost: 0xc4b5fd, healer: 0xf472b6, splitter: 0xfb923c, boss: 0x9333ea, shocker: 0xfde047, jammer: 0x2dd4bf, warlord: 0xef4444 };
+const electricMat = sharedMat(basicMat(0xfde047)), magentaMat = sharedMat(basicMat(0xe879f9));
+const eyeBlack = sharedMat(basicMat(0x111827)), eyeWhite = sharedMat(basicMat(0xffffff)), eyeRed = sharedMat(basicMat(0xff3b3b));
+function killEnemy(e) {
+  e.alive = false; kills++;
+  const reward = Math.round(e.def.reward * MODE.rewardMul * (MODE.infinite ? 1 + 0.03 * wave : 1));   // v Infinite odměny s vlnami rostou
+  setMoney(money + reward);
+  popText(e.aim, '+' + reward, 'text-amber-300');
+  burst(e.aim, ENEMY_COLORS[e.type], e.def.boss ? 30 : e.type === 'armored' ? 14 : 7, 5);
+  sfx('pop');
+  // Dělič se po zničení rozpadne na menší (červené) nepřátele na stejném místě cesty
+  if (e.def.splits) for (let i = 0; i < e.def.splits; i++) spawnEnemy('red', e.hpMul, Math.max(0, e.dist - i * 0.8), true);
+  if (e.def.boss) {
+    awardCoins(MODE.bossCoins);
+    toast('👑 Boss poražen!' + (MODE.bossCoins ? ` +${MODE.bossCoins} 🏅` : ''));
+    ringFx(e.pos, 0xa855f7, 8, 0.8);
+  }
+}
+function removeEnemy(e) {
+  scene.remove(e.root);
+  for (const m of e.mats) m.dispose();
+  if (e.bar) e.bar.children.forEach(c => c.material.dispose());
+}
+
+/* =====================================================================
+ *  EFEKTY A ČÁSTICE
+ * ===================================================================== */
+const particleMats = {};
+function burst(pos, color, n, spd) {
+  const m = particleMats[color] || (particleMats[color] = sharedMat(basicMat(color)));
+  for (let i = 0; i < n; i++) {
+    if (particles.length > 320) return;
+    const p = new T.Mesh(geo('pTet', () => new T.TetrahedronGeometry(0.18, 0)), m);
+    p.position.copy(pos);
+    const a = Math.random() * 6.28, up = Math.random() * 0.8 + 0.4;
+    scene.add(p);
+    particles.push({ m: p, v: new T.Vector3(Math.cos(a) * spd * Math.random(), up * spd, Math.sin(a) * spd * Math.random()), life: 0.55, max: 0.55 });
+  }
+}
+// Částice ohně (stoupají vzhůru, nejdřív rostou a pak mizí)
+const flameMats = [0xff4500, 0xff8c1a, 0xffc233].map(c => sharedMat(basicMat(c)));
+function flameP(x, y, z, vx, vy, vz, life) {
+  if (particles.length > 360) return;
+  const m = new T.Mesh(geo('flameSph', () => new T.SphereGeometry(0.2, 6, 5)), flameMats[(Math.random() * 3) | 0]);
+  m.position.set(x, y, z); scene.add(m);
+  particles.push({ m, v: new T.Vector3(vx, vy, vz), life, max: life, flame: true, g: -2 });
+}
+function addFx(m, life, fn) { scene.add(m); fxs.push({ m, life, max: life, fn }); }
+function killFx(f) {
+  scene.remove(f.m);
+  if (f.m.material) f.m.material.dispose();
+  if (f.m.userData.mats) f.m.userData.mats.forEach(x => x.dispose());
+}
+/** Zubatý blesk mezi dvěma body (válcové segmenty, bílé jádro + barevná záře) */
+function boltFx(a, b, color = 0x9ad7ff, life = 0.2, w = 0.07) {
+  const core = new T.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, depthWrite: false });
+  const glow = new T.MeshBasicMaterial({ color, transparent: true, opacity: 0.4, depthWrite: false });
+  const g = new T.Group(); g.userData.mats = [core, glow];
+  const segs = 7, pts = [], len = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z), j = Math.min(0.5, len * 0.07), up = new T.Vector3(0, 1, 0);
+  for (let i = 0; i <= segs; i++) {
+    const k = i / segs, jj = (i === 0 || i === segs) ? 0 : j;
+    pts.push(new T.Vector3(a.x + (b.x - a.x) * k + (Math.random() - 0.5) * jj * 2, a.y + (b.y - a.y) * k + (Math.random() - 0.5) * jj * 2, a.z + (b.z - a.z) * k + (Math.random() - 0.5) * jj * 2));
+  }
+  for (let i = 0; i < segs; i++) {
+    const p = pts[i], q = pts[i + 1], d = new T.Vector3().subVectors(q, p), l = d.length(), mid = p.clone().addScaledVector(d, 0.5);
+    d.normalize();
+    for (const [mat, k] of [[core, 1], [glow, 3.2]]) {
+      const m = new T.Mesh(geo('boltSeg', () => new T.CylinderGeometry(1, 1, 1, 5, 1)), mat);
+      m.position.copy(mid); m.scale.set(w * k, l, w * k); m.quaternion.setFromUnitVectors(up, d); g.add(m);
+    }
+  }
+  addFx(g, life, (o, k) => { o.userData.mats[0].opacity = 1 - k; o.userData.mats[1].opacity = 0.4 * (1 - k); });
+}
+function ringFx(pos, color, maxR, life, op = 0.9) {
+  const m = new T.Mesh(geo('fxRing', () => new T.RingGeometry(0.8, 1, 40).rotateX(-Math.PI / 2)), new T.MeshBasicMaterial({ color, transparent: true, opacity: op, depthWrite: false }));
+  m.position.set(pos.x, 0.1, pos.z);
+  addFx(m, life, (o, k) => { const s = 0.2 + k * maxR; o.scale.set(s, 1, s); o.material.opacity = op * (1 - k); });
+}
+function explosionFx(pos, radius) {
+  const m = new T.Mesh(geo('fxSphere', () => new T.SphereGeometry(1, 16, 12)), new T.MeshBasicMaterial({ color: 0xffa238, transparent: true, opacity: 0.85, depthWrite: false }));
+  m.position.set(pos.x, 0.6, pos.z);
+  addFx(m, 0.4, (o, k) => { const s = 0.3 + k * radius * 0.9; o.scale.setScalar(s); o.material.opacity = 0.85 * (1 - k); o.material.color.setHex(k < 0.4 ? 0xffd166 : 0xf97316); });
+  ringFx(pos, 0xfb923c, radius * 1.1, 0.45);
+  burst(_v3.set(pos.x, 0.8, pos.z), 0xfb923c, 10, 7);
+}
+function updateEffects(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i]; p.life -= dt;
+    if (p.life <= 0) { scene.remove(p.m); particles.splice(i, 1); continue; }
+    p.v.y -= (p.flame ? p.g : 14) * dt; p.m.position.addScaledVector(p.v, dt);
+    if (p.flame) { const k = 1 - p.life / p.max; p.m.scale.setScalar(Math.max(0.05, (0.35 + k * 1.1) * (1 - k * k))); }
+    else { p.m.scale.setScalar(Math.max(0.05, p.life / p.max)); p.m.rotation.x += dt * 8; p.m.rotation.y += dt * 6; }
+  }
+  for (let i = fxs.length - 1; i >= 0; i--) {
+    const f = fxs[i]; f.life -= dt;
+    const k = 1 - f.life / f.max;
+    if (k >= 1) { killFx(f); fxs.splice(i, 1); } else f.fn(f.m, k);
+  }
+}
+
+/* =====================================================================
+ *  STŘELBA A PROJEKTILY
+ * ===================================================================== */
+const dartProjMat = sharedMat(std(0xfde047, { emissive: 0xf59e0b, emissiveIntensity: 0.6 }));
+const ballMat = sharedMat(std(0x111827, { metalness: 0.8, roughness: 0.3 }));
+const poisonProjMat = sharedMat(std(0xa3e635, { emissive: 0x65a30d, emissiveIntensity: 0.9, roughness: 0.2 }));
+const iceProjMat = sharedMat(std(0x67e8f9, { emissive: 0x22d3ee, emissiveIntensity: 0.9, flatShading: true }));
+
+function findTarget(t) {
+  let best = null, bv = -Infinity;
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    const dx = e.pos.x - t.pos.x, dz = e.pos.z - t.pos.z, rr = t.range + e.def.radius * 0.6;
+    if (dx * dx + dz * dz > rr * rr) continue;
+    let v = t.mode === 'first' ? e.dist : t.mode === 'last' ? -e.dist : e.hp;
+    if (t.type === 'ice' && e.slowT > 0) v -= 1000;      // led radši míří na ještě nezpomalené
+    if (v > bv) { bv = v; best = e; }
+  }
+  return best;
+}
+
+/** Plamenomet: jeden "tik" – zasáhne všechny nepřátele v kuželu před věží, podpálí je a vypustí plameny */
+function flameTick(t) {
+  const fx = Math.sin(t.head.rotation.y), fz = Math.cos(t.head.rotation.y);
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    const dx = e.pos.x - t.pos.x, dz = e.pos.z - t.pos.z, d = Math.hypot(dx, dz);
+    if (d > t.range + e.def.radius * 0.5) continue;
+    if (d > 0.5) {
+      const ang = Math.acos(clamp((dx * fx + dz * fz) / d, -1, 1));
+      if (ang > t.cone + Math.atan2(e.def.radius * 0.7, d)) continue;
+    }
+    damageEnemy(e, t.damage, true);                  // oheň ignoruje pancíř
+    applyBurn(e, t.burnDps, t.burnT);
+  }
+  t.muzzle.getWorldPosition(_v1);
+  const sp = t.range / 0.4;
+  for (let i = 0; i < 2; i++) {
+    const a = (Math.random() - 0.5) * t.cone * 1.6, ca = Math.cos(a), sa = Math.sin(a);
+    const dx = fx * ca - fz * sa, dz = fx * sa + fz * ca, k = sp * (0.8 + Math.random() * 0.3);
+    flameP(_v1.x, _v1.y, _v1.z, dx * k, 0.4 + Math.random() * 0.6, dz * k, 0.36 + Math.random() * 0.1);
+  }
+  sfx('flame');
+}
+
+/** Elektrošoker: blesk zasáhne hlavní cíl a přeskakuje na nejbližší další nepřátele (s úbytkem síly) */
+function teslaFire(t, e) {
+  t.muzzle.getWorldPosition(_v1);
+  t.recoil = 1;
+  const hit = new Set([e]);
+  let prev = _v1.clone(), cur = e, dmg = t.damage;
+  for (let i = 0; i < t.chain && cur; i++) {
+    const tp = cur.aim.clone();
+    boltFx(prev, tp, 0x7dd3fc, 0.2);
+    burst(tp, 0x93c5fd, 3, 3);
+    damageEnemy(cur, dmg);
+    dmg *= 0.82; prev = tp;
+    let next = null, bd = t.jump * t.jump;
+    for (const o of enemies) {
+      if (!o.alive || hit.has(o)) continue;
+      const dx = o.pos.x - tp.x, dz = o.pos.z - tp.z, d2 = dx * dx + dz * dz;
+      if (d2 <= bd) { bd = d2; next = o; }
+    }
+    if (next) hit.add(next);
+    cur = next;
+  }
+  sfx('zap');
+}
+
+/** Omračující nepřítel vyšle puls: omráčí nejbližší věže v dosahu (věže pod majákem jsou imunní) */
+function stunPulse(e) {
+  const s = e.def.stun, cand = [];
+  for (const t of towers) {
+    if (t.type === 'beacon' || t.stunT > 0 || t.stunImm > 0 || t.appear < 1) continue;
+    const d = Math.hypot(t.pos.x - e.pos.x, t.pos.z - e.pos.z);
+    if (d <= s.radius) cand.push({ t, d });
+  }
+  if (!cand.length) return false;
+  cand.sort((a, b) => a.d - b.d);
+  ringFx(e.pos, 0xfde047, s.radius, 0.55, 0.7);
+  sfx('stun');
+  for (const { t } of cand.slice(0, s.maxTowers)) {
+    _v2.set(t.pos.x, TOP[t.type] - 0.5, t.pos.z);
+    boltFx(e.aim, _v2, 0xfde047, 0.4);
+    if (t.shielded) {
+      ringFx(t.pos, 0x34d399, 2.6, 0.4);
+      if (t.blockCd <= 0) { popText(t.pos, '🛡️ Blokováno', 'text-emerald-300'); t.blockCd = 1; }
+      continue;
+    }
+    t.stunT = s.time; t.cd = Math.max(t.cd, 0.3); t.stunFx.visible = true;
+    popText(t.pos, '⚡ Omráčena', 'text-yellow-300');
+  }
+  return true;
+}
+function endStun(t) { t.stunT = 0; t.stunImm = 1.0; t.stunFx.visible = false; t.head.rotation.z = 0; }
+
+/** Majáky: věže v dosahu jsou chráněné před omráčením a střílejí rychleji (bonusy se nesčítají, platí nejsilnější) */
+function updateAuras() {
+  let any = false;
+  for (const t of towers) { t.haste = 1; t.shielded = false; if (t.type === 'beacon') any = true; }
+  if (!any) return;
+  for (const b of towers) {
+    if (b.type !== 'beacon') continue;
+    const r2 = b.range * b.range;
+    for (const t of towers) {
+      if (t === b) continue;
+      const dx = t.pos.x - b.pos.x, dz = t.pos.z - b.pos.z;
+      if (dx * dx + dz * dz > r2) continue;
+      t.shielded = true;
+      if (t.type !== 'beacon') t.haste = Math.max(t.haste, 1 + b.aura);
+    }
+  }
+}
+let _lastStatus = '';
+function updatePanelStatus() {
+  const t = selectedTower;
+  const st = !t ? '' : t.stunT > 0 ? `⚡ Omráčená ${t.stunT.toFixed(1)} s` : (t.shielded && t.type !== 'beacon') ? '🛡️ Chráněna majákem' : '';
+  if (st !== _lastStatus) { _lastStatus = st; $('tpStatus').textContent = st; }
+}
+
+/** Odstřelovač: okamžitý zásah (hitscan) – tenký paprsek od hlavně do cíle, ignoruje pancíř, bossové dostanou bonus */
+function sniperShot(t, e) {
+  const dmg = t.damage * (e.def.boss ? t.bossMul : 1);
+  boltFx(_v1, e.aim, 0xfca5a5, 0.16, 0.05);
+  burst(e.aim, 0xf87171, 6, 4);
+  ringFx(e.pos, 0xf87171, 1.6, 0.3);
+  damageEnemy(e, dmg, true);
+  sfx('snipe');
+}
+/** Vír: energetická vlna odhodí všechny nepřátele v dosahu zpět po cestě (bossové jen částečně) a krátce je zpomalí */
+function vortexPulse(t) {
+  ringFx(t.pos, 0xc084fc, t.range, 0.6, 0.65);
+  ringFx(t.pos, 0xe9d5ff, t.range * 0.6, 0.45, 0.5);
+  burst(_v3.set(t.pos.x, 1.6, t.pos.z), 0xc084fc, 8, 5);
+  enemiesInRadius(t.pos.x, t.pos.z, t.range, e => {
+    e.dist = Math.max(0, e.dist - t.push * (e.def.boss ? 0.35 : 1));
+    applySlow(e, 0.55, 1.2);
+    damageEnemy(e, t.damage);
+  });
+  sfx('vortex');
+}
+
+function fire(t, e) {
+  if (t.type === 'flame') { flameTick(t); return; }
+  if (t.type === 'tesla') { teslaFire(t, e); return; }
+  t.muzzle.getWorldPosition(_v1);
+  t.recoil = 1;
+  if (t.type === 'sniper') { sniperShot(t, e); return; }
+  if (t.type === 'vortex') { vortexPulse(t); return; }
+  if (t.type === 'dart') {
+    const m = new T.Mesh(geo('dProj', () => new T.ConeGeometry(0.1, 0.55, 6).rotateX(Math.PI / 2)), dartProjMat);
+    m.position.copy(_v1); m.castShadow = true; scene.add(m);
+    projectiles.push({ kind: 'dart', m, pos: m.position, target: e, last: e.aim.clone(), speed: t.cfg.projSpeed, dmg: t.damage });
+    sfx('dart');
+  } else if (t.type === 'ice') {
+    const m = new T.Mesh(geo('iProj', () => new T.IcosahedronGeometry(0.24, 0)), iceProjMat);
+    m.position.copy(_v1); scene.add(m);
+    projectiles.push({ kind: 'ice', m, pos: m.position, target: e, last: e.aim.clone(), speed: t.cfg.projSpeed, dmg: t.damage, aoe: t.aoe, slowF: t.slowF, slowT: t.slowT });
+    sfx('ice');
+  } else if (t.type === 'poison') {
+    const m = new T.Mesh(geo('pProj', () => new T.SphereGeometry(0.26, 12, 10)), poisonProjMat);
+    m.position.copy(_v1); scene.add(m);
+    projectiles.push({ kind: 'poison', m, pos: m.position, target: e, last: e.aim.clone(), speed: t.cfg.projSpeed, dmg: t.damage, aoe: t.aoe, pDps: t.poisonDps, pT: t.poisonT });
+    sfx('poison');
+  } else {
+    // Dělo: balistický oblouk na předpokládanou pozici nepřítele
+    const sp = e.speed * (e.slowT > 0 ? e.slowF : 1);
+    let T1 = Math.max(0.3, Math.hypot(e.pos.x - _v1.x, e.pos.z - _v1.z) / t.cfg.projSpeed);
+    for (let i = 0; i < 2; i++) {
+      posOnPath(Math.min(pathLength - 0.01, e.dist + sp * T1), _v2);
+      T1 = Math.max(0.3, Math.hypot(_v2.x - _v1.x, _v2.z - _v1.z) / t.cfg.projSpeed);
+    }
+    posOnPath(Math.min(pathLength - 0.01, e.dist + sp * T1), _v2);
+    const m = new T.Mesh(geo('cProj', () => new T.SphereGeometry(0.3, 12, 10)), ballMat);
+    m.position.copy(_v1); m.castShadow = true; scene.add(m);
+    projectiles.push({ kind: 'cannon', m, pos: m.position, from: _v1.clone(), to: new T.Vector3(_v2.x, 0, _v2.z), t: 0, T: T1, dmg: t.damage, aoe: t.aoe });
+    sfx('cannon');
+  }
+}
+
+function enemiesInRadius(x, z, r, fn) {
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    const dx = e.pos.x - x, dz = e.pos.z - z, rr = r + e.def.radius * 0.5;
+    if (dx * dx + dz * dz <= rr * rr) fn(e, Math.sqrt(dx * dx + dz * dz));
+  }
+}
+
+function updateProjectiles(dt) {
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    const p = projectiles[i];
+    let done = false;
+    if (p.kind === 'cannon') {
+      p.t += dt; const k = Math.min(1, p.t / p.T);
+      p.pos.lerpVectors(p.from, p.to, k);
+      p.pos.y += 4 * k * (1 - k) * (2.5 + p.T * 3);
+      p.m.rotation.x += dt * 8;
+      if (k >= 1) {
+        done = true; explosionFx(p.to, p.aoe); sfx('boom');
+        enemiesInRadius(p.to.x, p.to.z, p.aoe, (e, d) => damageEnemy(e, d < p.aoe * 0.5 ? p.dmg : p.dmg * 0.7));
+      }
+    } else {
+      if (p.target.alive) p.last.copy(p.target.aim);
+      _v2.subVectors(p.last, p.pos);
+      const d = _v2.length(), step = p.speed * dt;
+      if (d <= step + 0.15) {
+        done = true;
+        if (p.kind === 'dart') {
+          if (p.target.alive) { damageEnemy(p.target, p.dmg); burst(p.last, 0xfde047, 3, 3); }
+        } else if (p.kind === 'poison') {
+          ringFx(p.last, 0xa3e635, p.aoe * 1.1, 0.5); burst(p.last, 0xbef264, 8, 4);
+          enemiesInRadius(p.last.x, p.last.z, p.aoe, e => { applyPoison(e, p.pDps, p.pT); damageEnemy(e, p.dmg); });
+        } else {
+          ringFx(p.last, 0x67e8f9, p.aoe * 1.1, 0.45); burst(p.last, 0xbae6fd, 6, 4);
+          enemiesInRadius(p.last.x, p.last.z, p.aoe, e => { applySlow(e, p.slowF, p.slowT); damageEnemy(e, p.dmg); });
+        }
+      } else {
+        p.pos.addScaledVector(_v2, step / d);
+        if (p.kind === 'dart') p.m.lookAt(p.last); else { p.m.rotation.x += dt * 6; p.m.rotation.y += dt * 5; }
+      }
+    }
+    if (done) { scene.remove(p.m); projectiles.splice(i, 1); }
+  }
+}
+
+function updateTower(t, dt) {
+  if (t.appear < 1) { t.appear = Math.min(1, t.appear + dt * 4); t.group.scale.setScalar(Math.max(0.001, easeOutBack(t.appear))); }
+  if (t.stunImm > 0) t.stunImm -= dt;
+  if (t.blockCd > 0) t.blockCd -= dt;
+  if (t.stunT > 0) {
+    if (t.shielded) endStun(t);                       // maják okamžitě zbaví omráčení
+    else {
+      t.stunT -= dt;
+      if (t.stunT <= 0) endStun(t);
+      else {                                          // omráčená věž nestřílí
+        t.stunFx.rotation.y += dt * 7;
+        t.stunFx.scale.setScalar(1 + 0.12 * Math.sin(time * 30));
+        t.head.rotation.z = Math.sin(time * 55) * 0.1;
+        if (Math.random() < dt * 8) burst(_v3.set(t.pos.x, TOP[t.type] - 0.4, t.pos.z), 0xfde047, 2, 3);
+        return;
+      }
+    }
+  }
+  t.cd -= dt * t.haste;
+  if (t.type === 'factory') { updateFactory(t, dt); return; }
+  if (t.type === 'beacon') {
+    t.crystal.rotation.y += dt * 1.5; t.crystal.position.y = 0.2 + Math.sin(time * 2) * 0.08; t.orbit.rotation.y += dt * 2;
+    t.pulseCd -= dt;
+    if (t.pulseCd <= 0) { t.pulseCd = 2.4; ringFx(t.pos, 0x6ee7b7, t.range * 0.95, 1.0, 0.35); }
+    return;
+  }
+  const tgt = findTarget(t);
+  if (tgt) {
+    if (t.type !== 'ice' && t.type !== 'poison' && t.type !== 'vortex') t.head.rotation.y = lerpAngle(t.head.rotation.y, Math.atan2(tgt.pos.x - t.pos.x, tgt.pos.z - t.pos.z), Math.min(1, dt * 14));
+    if (t.cd <= 0) { fire(t, tgt); t.cd = t.rate; }
+  }
+  t.recoil = Math.max(0, t.recoil - dt * 6);
+  if (t.type === 'dart') t.head.scale.setScalar(t.headBase * (1 + 0.18 * t.recoil));
+  else if (t.type === 'cannon') t.kick.position.z = t.kickBase - 0.35 * t.recoil;
+  else if (t.type === 'sniper') t.kick.position.z = t.kickBase - 0.55 * t.recoil;
+  else if (t.type === 'poison') {
+    t.crystal.scale.setScalar(1 + 0.25 * t.recoil); t.orbit.rotation.y += dt * 1.6; t.crystal.position.y = Math.sin(time * 3) * 0.06;
+  } else if (t.type === 'vortex') {
+    t.crystal.scale.setScalar(1 + 0.4 * t.recoil); t.crystal.rotation.x += dt * 2.2; t.crystal.rotation.y += dt * 3;
+    t.orbit.rotation.y += dt * 4; t.orbit.rotation.x += dt * 1.3;
+  }
+  else if (t.type === 'ice') {
+    const s = 1 + 0.3 * t.recoil; t.crystal.scale.set(0.8 * s, 1.3 * s, 0.8 * s);
+    t.orbit.rotation.y += dt * 2; t.crystal.rotation.y += dt * 1.2;
+  } else if (t.type === 'tesla') {
+    t.crystal.scale.setScalar(1 + 0.35 * t.recoil);
+    t.orbit.rotation.y += dt * 3; t.orbit.rotation.x += dt * 1.7;
+  }
+}
+
+/* =====================================================================
+ *  TOVÁRNA NA ROBOTY A JEDNOTKY
+ *  Jednotky vznikají u základny a jdou po cestě směrem ke startu nepřátel.
+ *  Když mají nepřítele v dosahu, zastaví se a střílejí. Nepřátelé je při dotyku zraňují.
+ * ===================================================================== */
+function factoryStats(t) {
+  const L = t.level, M = Math.max(0, L - 3);
+  return {
+    maxR: 4 + 2 * L, rInt: 8 - 1.2 * (L - 1), rHp: Math.round(45 * (1 + 0.4 * (L - 1))), rDmg: Math.round(1.3 * (1 + 0.5 * (L - 1)) * 100) / 100, rRate: 0.65,
+    maxM: L >= 4 ? 4 : L >= 3 ? 2 : 0, mInt: L >= 4 ? 22 : 30, mHp: Math.round(700 * (1 + 0.5 * M)), mDmg: Math.round(9 * (1 + 0.5 * M) * 10) / 10, mRate: 1.3, mAoe: 2.4
+  };
+}
+
+function updateFactory(t, dt) {
+  const s = factoryStats(t);
+  t.orbit.rotation.y += dt * 1.6; t.head.rotation.y += dt * 0.7;
+  let nr = 0, nm = 0;
+  for (const u of units) if (u.owner === t && u.alive) { if (u.kind === 'mech') nm++; else nr++; }
+  if (nr >= s.maxR) t.unitCd = s.rInt;                // plno → odpočet začne, až některý robot padne
+  else { t.unitCd -= dt * t.haste; if (t.unitCd <= 0) { spawnUnit(t, 'robot'); t.unitCd = s.rInt; } }
+  if (s.maxM > 0) {
+    if (nm >= s.maxM) t.mechCd = s.mInt;
+    else { t.mechCd -= dt * t.haste; if (t.mechCd <= 0) { spawnUnit(t, 'mech'); t.mechCd = s.mInt; } }
+  }
+}
+
+let UM = null;
+function unitMats() {
+  return UM || (UM = {
+    body: sharedMat(std(0x64748b, { metalness: 0.55, roughness: 0.4 })), dark: sharedMat(std(0x1e293b, { metalness: 0.5, roughness: 0.5 })),
+    trim: sharedMat(std(0x22d3ee, { emissive: 0x0891b2, emissiveIntensity: 0.6, roughness: 0.3 })), amber: sharedMat(std(0xf59e0b, { metalness: 0.6, roughness: 0.35 })),
+    visor: sharedMat(basicMat(0x67e8f9))
+  });
+}
+const ub = (w, h, d, m, x, y, z) => { const o = mesh(geo('uCube', () => new T.BoxGeometry(1, 1, 1)), m, x, y, z); o.scale.set(w, h, d); return o; };
+const uc = (r, l, m, x, y, z, rx = 0) => { const o = mesh(geo('uCyl', () => new T.CylinderGeometry(1, 1, 1, 10)), m, x, y, z); o.scale.set(r, l, r); o.rotation.x = rx; return o; };
+
+function buildUnit(kind) {
+  const M = unitMats(), root = new T.Group(), body = new T.Group(), legs = [], muzzles = [];
+  root.add(body);
+  if (kind === 'robot') {
+    for (const s of [-1, 1]) {
+      const p = new T.Group(); p.position.set(s * 0.2, 0.55, 0);
+      p.add(ub(0.2, 0.5, 0.24, M.dark, 0, -0.27, 0)); p.add(ub(0.26, 0.1, 0.38, M.body, 0, -0.52, 0.06));
+      body.add(p); legs.push(p);
+    }
+    body.add(ub(0.7, 0.55, 0.48, M.body, 0, 0.85, 0)); body.add(ub(0.34, 0.12, 0.04, M.trim, 0, 0.9, 0.25));
+    body.add(ub(0.46, 0.34, 0.4, M.dark, 0, 1.3, 0)); body.add(ub(0.34, 0.09, 0.04, M.visor, 0, 1.32, 0.21));
+    body.add(uc(0.025, 0.35, M.body, 0, 1.65, 0));
+    body.add(ub(0.14, 0.4, 0.16, M.dark, -0.46, 0.85, 0));
+    body.add(ub(0.16, 0.16, 0.5, M.amber, 0.46, 0.9, 0.18));
+    const mz = new T.Object3D(); mz.position.set(0.46, 0.9, 0.46); body.add(mz); muzzles.push(mz);
+  } else {
+    for (const s of [-1, 1]) {
+      const p = new T.Group(); p.position.set(s * 0.6, 1.5, 0);
+      p.add(ub(0.55, 1.0, 0.65, M.body, 0, -0.55, 0)); p.add(ub(0.75, 0.28, 1.05, M.dark, 0, -1.36, 0.15)); p.add(ub(0.6, 0.12, 0.7, M.amber, 0, -0.1, 0));
+      body.add(p); legs.push(p);
+    }
+    body.add(ub(1.5, 0.35, 0.9, M.dark, 0, 1.58, 0));
+    body.add(ub(1.7, 1.1, 1.2, M.body, 0, 2.25, 0));
+    body.add(ub(1.2, 0.45, 0.06, M.amber, 0, 2.05, 0.62));
+    body.add(ub(0.85, 0.38, 0.1, M.visor, 0, 2.62, 0.6));
+    body.add(ub(1.0, 0.9, 0.5, M.dark, 0, 2.35, -0.85));
+    body.add(uc(0.1, 0.7, M.dark, -0.3, 3.0, -0.9)); body.add(uc(0.1, 0.7, M.dark, 0.3, 3.0, -0.9));
+    body.add(uc(0.03, 0.9, M.body, 0.65, 3.25, -0.2));
+    for (const s of [-1, 1]) {
+      body.add(ub(0.55, 0.55, 0.7, M.trim, s * 1.1, 2.55, 0));
+      body.add(uc(0.2, 1.3, M.dark, s * 1.1, 2.6, 0.7, Math.PI / 2));
+      const mz = new T.Object3D(); mz.position.set(s * 1.1, 2.6, 1.4); body.add(mz); muzzles.push(mz);
+    }
+  }
+  return { root, body, legs, muzzles };
+}
+
+const _uDir = new T.Vector3();
+let laneCtr = 0;
+function placeUnit(u) {
+  posOnPath(u.dist, u.pos, _uDir);
+  u.pos.x += -_uDir.z * u.lane; u.pos.z += _uDir.x * u.lane;      // každá jednotka jde v mírně jiném pruhu
+  u.hdg = Math.atan2(-_uDir.x, -_uDir.z);                          // jde proti směru nepřátel
+  u.group.position.copy(u.pos);
+}
+function spawnUnit(t, kind) {
+  const b = buildUnit(kind), s = factoryStats(t), mech = kind === 'mech', n = laneCtr++;
+  const u = {
+    kind, owner: t, alive: true, hp: mech ? s.mHp : s.rHp, maxHp: mech ? s.mHp : s.rHp, dmg: mech ? s.mDmg : s.rDmg, rate: mech ? s.mRate : s.rRate,
+    range: mech ? 6.5 : 3.6, speed: mech ? 1.7 : 2.8, aoe: mech ? s.mAoe : 0, rad: mech ? 1.1 : 0.45,
+    dist: pathLength - 0.4, lane: ((n % 3) - 1) * (mech ? 0.35 : 0.6),
+    pos: new T.Vector3(), hdg: 0, cd: 0.5, walk: Math.random() * 6, born: 0, kick: 0, mi: 0,
+    group: b.root, body: b.body, legs: b.legs, muzzles: b.muzzles, bar: null, fill: null, barW: 0
+  };
+  placeUnit(u); u.body.rotation.y = u.hdg; u.group.scale.setScalar(0.01);
+  scene.add(u.group); units.push(u);
+  ringFx(u.pos, 0x22d3ee, mech ? 4.5 : 2.2, 0.5);
+  boltFx(_v2.set(t.pos.x, TOP.factory - 0.5, t.pos.z), _v3.set(u.pos.x, 1.2, u.pos.z), 0x22d3ee, 0.4);
+  sfx(mech ? 'boom' : 'build');
+  if (mech) popText(u.pos, '🦾 MECH!', 'text-cyan-300');
+  if (selectedTower === t) refreshPanel();
+}
+
+function ensureUnitBar(u) {
+  if (u.bar) return;
+  const mech = u.kind === 'mech', w = mech ? 2.0 : 0.9, bar = new T.Group();
+  const back = new T.Mesh(geo('barPlane', () => new T.PlaneGeometry(1, 1)), new T.MeshBasicMaterial({ color: 0x000000, depthTest: false, depthWrite: false, transparent: true, opacity: 0.9, fog: false }));
+  back.scale.set(w + 0.1, 0.2, 1); back.renderOrder = 10;
+  const fill = new T.Mesh(geo('barFill', () => new T.PlaneGeometry(1, 1).translate(0.5, 0, 0)), new T.MeshBasicMaterial({ color: 0x4ade80, depthTest: false, depthWrite: false, transparent: true, fog: false }));
+  fill.position.set(-w / 2, 0, 0.01); fill.scale.set(w, 0.14, 1); fill.renderOrder = 11;
+  bar.add(back, fill); bar.position.y = mech ? 4.0 : 2.0;
+  u.group.add(bar); u.bar = bar; u.fill = fill; u.barW = w;
+}
+function hurtUnit(u, dmg) {
+  if (!u.alive) return;
+  u.hp -= dmg; ensureUnitBar(u);
+  u.fill.scale.x = Math.max(0.001, u.barW * clamp(u.hp / u.maxHp, 0, 1));
+  if (u.hp <= 0) {
+    u.alive = false;
+    burst(_v3.set(u.pos.x, 1.0, u.pos.z), u.kind === 'mech' ? 0xfb923c : 0x67e8f9, u.kind === 'mech' ? 26 : 10, 6);
+    if (u.kind === 'mech') { explosionFx(u.pos, 3); sfx('boom'); }
+  }
+}
+function tracerFx(a, b, color, w = 0.06, life = 0.1) {
+  const mat = new T.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, depthWrite: false });
+  const d = new T.Vector3().subVectors(b, a), l = d.length() || 0.01;
+  const m = new T.Mesh(geo('boltSeg', () => new T.CylinderGeometry(1, 1, 1, 5, 1)), mat);
+  m.position.copy(a).addScaledVector(d, 0.5); m.scale.set(w, l, w); m.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), d.normalize());
+  addFx(m, life, (o, k) => { o.material.opacity = 0.95 * (1 - k); });
+}
+
+function updateUnits(dt) {
+  // 1) srážka: když jednotka a balonek splynou, vzájemně si ubírají životy – oba přijdou o tolik HP,
+  //    kolik má slabší z nich (silný balonek jednotku zničí a sám zeslábne, slabý jednotku sotva škrábne)
+  if (units.length) for (const e of enemies) {
+    if (!e.alive || e.born < 1) continue;
+    for (const u of units) {
+      if (!u.alive || u.born < 1) continue;
+      if (e.clashed && e.clashed.has(u)) continue;                 // každá dvojice se střetne jen jednou
+      if (Math.hypot(u.pos.x - e.pos.x, u.pos.z - e.pos.z) > u.rad + e.def.radius) continue;
+      (e.clashed || (e.clashed = new Set())).add(u);
+      const loss = Math.min(u.hp, e.hp);
+      hurtUnit(u, loss);
+      burst(_v3.set(e.pos.x, e.def.center, e.pos.z), 0xfde047, 5, 4);
+      damageEnemy(e, loss, true);
+      if (!e.alive) break;
+    }
+  }
+  // 2) pohyb po cestě proti nepřátelům + střelba
+  for (const u of units) {
+    if (!u.alive) continue;
+    if (u.born < 1) { u.born = Math.min(1, u.born + dt * 2.5); u.group.scale.setScalar(Math.max(0.01, easeOutBack(u.born))); }
+    let tgt = null, bd = u.range * u.range;
+    for (const e of enemies) {
+      if (!e.alive || e.born < 0.6) continue;
+      const dx = e.pos.x - u.pos.x, dz = e.pos.z - u.pos.z, d2 = dx * dx + dz * dz;
+      if (d2 < bd) { bd = d2; tgt = e; }
+    }
+    u.cd -= dt;
+    const moving = !tgt;
+    if (moving) { u.dist = Math.max(0, u.dist - u.speed * dt); u.walk += dt * u.speed * (u.kind === 'mech' ? 2.2 : 3.2); }
+    if (u.dist <= 0.6) {                               // došli ke spawnu nepřátel → zničeni
+      u.alive = false; burst(_v3.set(u.pos.x, 1.0, u.pos.z), 0x67e8f9, u.kind === 'mech' ? 20 : 8, 5);
+      if (u.kind === 'mech') explosionFx(u.pos, 2.5);
+      continue;
+    }
+    placeUnit(u);
+    const sw = moving ? Math.sin(u.walk) * 0.6 : 0, k = Math.min(1, dt * 12);
+    u.legs[0].rotation.x += (sw - u.legs[0].rotation.x) * k; u.legs[1].rotation.x += (-sw - u.legs[1].rotation.x) * k;
+    u.kick = Math.max(0, u.kick - dt * 6);
+    u.body.position.y = moving ? Math.abs(Math.sin(u.walk)) * (u.kind === 'mech' ? 0.12 : 0.06) : 0;
+    u.body.position.z = -(u.kind === 'mech' ? 0.25 : 0.1) * u.kick;
+    const ha = tgt ? Math.atan2(tgt.pos.x - u.pos.x, tgt.pos.z - u.pos.z) : u.hdg;
+    u.body.rotation.y = lerpAngle(u.body.rotation.y, ha, Math.min(1, dt * 10));
+    if (tgt && u.cd <= 0 && u.born >= 1) {
+      u.cd = u.rate; u.kick = 1;
+      const mz = u.muzzles[u.mi++ % u.muzzles.length]; mz.getWorldPosition(_v1);
+      if (u.kind === 'robot') {
+        tracerFx(_v1, tgt.aim, 0x67e8f9, 0.05, 0.1); damageEnemy(tgt, u.dmg); sfx('laser');
+      } else {
+        const hp = tgt.pos.clone();
+        tracerFx(_v1, tgt.aim, 0xfb923c, 0.14, 0.15); explosionFx(hp, u.aoe * 0.8); sfx('cannon');
+        for (const o of enemies.slice()) {
+          if (!o.alive) continue;
+          if (o === tgt) damageEnemy(o, u.dmg);
+          else if (Math.hypot(o.pos.x - hp.x, o.pos.z - hp.z) <= u.aoe) damageEnemy(o, u.dmg * 0.6);
+        }
+      }
+    }
+    if (u.bar) u.bar.quaternion.copy(camera.quaternion);
+  }
+  // 3) odstranění zničených jednotek
+  for (let i = units.length - 1; i >= 0; i--) {
+    const u = units[i];
+    if (u.alive) continue;
+    scene.remove(u.group); disposeObject(u.group); units.splice(i, 1);
+    if (selectedTower === u.owner) refreshPanel();
+  }
+}
+
+/* =====================================================================
+ *  VLNY A HLAVNÍ UPDATE
+ * ===================================================================== */
+/* =====================================================================
+ *  SCHOPNOSTI HRÁČE (Q / W / E / R), AUTO-VLNY, OTŘESY KAMERY
+ * ===================================================================== */
+const AIR_R = 4.2;
+const ABILITIES = [
+  { id: 'air',    icon: '💥', name: 'Nálet',           key: 'KeyQ', cd: 45,  target: true, desc: 'Klikni na mapu – po chvilce tam dopadne velký plošný zásah (ignoruje pancíř)' },
+  { id: 'freeze', icon: '❄️', name: 'Mrazivá vlna',    key: 'KeyW', cd: 60,  desc: 'Všichni nepřátelé na 5 s zpomaleni na 15 % (duchové jsou imunní)' },
+  { id: 'cash',   icon: '💰', name: 'Dotace',          key: 'KeyE', cd: 90,  desc: 'Okamžitý příjem zlata (roste s číslem vlny)' },
+  { id: 'repair', icon: '🛠️', name: 'Oprava základny', key: 'KeyR', cd: 120, desc: 'Obnoví 3 životy' }
+];
+const abil = {};
+for (const a of ABILITIES) abil[a.id] = { cd: 0 };
+let armed = null, timed = [], autoWave = false, shake = 0;
+const airRing = new T.Mesh(new T.RingGeometry(AIR_R - 0.15, AIR_R, 48).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.85, depthWrite: false }));
+airRing.position.y = 0.12; airRing.visible = false; scene.add(airRing);
+
+function buildAbilityBar() {
+  const box = $('abilities'); box.innerHTML = '';
+  for (const a of ABILITIES) {
+    const b = document.createElement('button'), k = a.key.slice(3);
+    b.className = 'relative w-14 h-14 rounded-xl glass overflow-hidden text-2xl hover:bg-slate-700/80 active:scale-95 transition';
+    b.title = `${a.name} (${k}) – ${a.desc}`;
+    b.innerHTML = `<span>${a.icon}</span><span class="absolute top-0.5 left-1.5 text-[10px] font-bold text-slate-300">${k}</span><span class="cdov absolute inset-x-0 bottom-0 bg-slate-900/70" style="height:0%"></span><span class="cdtx absolute inset-0 flex items-center justify-center text-base font-bold text-white"></span>`;
+    b.addEventListener('click', () => triggerAbility(a.id));
+    box.appendChild(b); a.el = b; a.ov = b.querySelector('.cdov'); a.tx = b.querySelector('.cdtx');
+  }
+}
+function renderAbilities() {
+  const on = state === 'playing', box = $('abilities');
+  box.style.display = on ? 'flex' : 'none';
+  if (!on) return;
+  for (const a of ABILITIES) {
+    const cd = abil[a.id].cd;
+    a.ov.style.height = (cd > 0 ? (cd / a.cd) * 100 : 0) + '%';
+    a.tx.textContent = cd > 0 ? Math.ceil(cd) : '';
+    a.el.style.outline = armed === a.id ? '2px solid #fbbf24' : '';
+  }
+}
+function cancelArmed() { armed = null; airRing.visible = false; }
+
+function triggerAbility(id) {
+  if (state !== 'playing' || paused) return;
+  const a = ABILITIES.find(x => x.id === id), st = abil[id];
+  if (st.cd > 0) { sfx('err'); toast(`${a.icon} ${a.name}: nabíjí se (${Math.ceil(st.cd)} s)`); return; }
+  if (a.target) {
+    if (armed === id) { cancelArmed(); return; }
+    cancelPlacing(); deselectTower(); armed = id; airRing.visible = true;
+    toast('💥 Klikni na cestu – za chvilku tam dopadne nálet (Esc = zrušit)'); return;
+  }
+  if (id === 'freeze') {
+    for (const e of enemies) applySlow(e, 0.15, 5);
+    ringFx(new T.Vector3(0, 0, 0), 0x7dd3fc, 24, 0.9); sfx('ice'); toast('❄️ Mrazivá vlna!');
+  } else if (id === 'cash') {
+    const gain = 80 + wave * 15; setMoney(money + gain);
+    popText(base.position, `+${gain} 🪙`, 'text-yellow-300'); sfx('up'); toast(`💰 Dotace +${gain} 🪙`);
+  } else if (id === 'repair') {
+    if (lives >= MODE.lives) { toast('🛠️ Základna je v pořádku'); return; }       // bez plýtvání schopností
+    setLives(Math.min(MODE.lives, lives + 3)); popText(base.position, '+3 ❤️', 'text-emerald-300'); sfx('build'); toast('🛠️ Základna opravena');
+  }
+  st.cd = a.cd;
+}
+function fireArmed() {
+  if (armed !== 'air' || !hoverCell) return;
+  const x = groundHit.x, z = groundHit.z, R = AIR_R, dmg = 40 + wave * 12, pos = new T.Vector3(x, 0, z);
+  abil.air.cd = ABILITIES[0].cd; cancelArmed();
+  ringFx(pos, 0xef4444, R, 0.9); sfx('snipe');
+  timed.push({ t: gameTime + 0.9, fn: () => {
+    explosionFx(pos, R);
+    for (let i = 0; i < 4; i++) { const an = i * Math.PI / 2 + 0.6; explosionFx(new T.Vector3(x + Math.cos(an) * R * 0.55, 0, z + Math.sin(an) * R * 0.55), R * 0.5); }
+    for (const e of enemies.slice()) if (e.alive && Math.hypot(e.pos.x - x, e.pos.z - z) <= R + e.def.radius * 0.5) damageEnemy(e, dmg, true);
+    shake = Math.max(shake, 0.6); sfx('boom');
+  } });
+}
+function toggleAuto() {
+  autoWave = !autoWave;
+  $('btnAuto').textContent = '🔁 Auto: ' + (autoWave ? 'zap' : 'vyp'); $('btnAuto').classList.toggle('ring-2', autoWave);
+  if (autoWave && state === 'playing' && !waveRunning) queueAutoWave(2);
+}
+function queueAutoWave(delay) {
+  timed.push({ t: gameTime + delay, fn: () => { if (autoWave && state === 'playing' && !waveRunning) startNextWave(); } });
+}
+
+function startNextWave() {
+  if (state !== 'playing' || wave >= CFG.MAX_WAVES) return;
+  const n = wave + 1, def = waveDef(n);
+  for (const g of def.groups) for (let i = 0; i < g.count; i++) spawnEvents.push({ t: gameTime + g.start + i * g.gap, type: g.type, hpMul: g.hpMul || def.hpMul });
+  spawnEvents.sort((a, b) => a.t - b.t);
+  waveRunning = true;
+  setWave(n); banner('Vlna ' + n);
+  if (!warnedStun && def.groups.some(g => ENEMY_TYPES[g.type].stun)) {
+    warnedStun = true; setTimeout(() => toast('⚡ Pozor! Noví nepřátelé omračují věže – drž je od sebe nebo postav 🛡️ Maják'), 1900);
+  }
+}
+
+function updateEnemies(dt) {
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    if (e.slowT > 0) { e.slowT -= dt; if (e.slowT <= 0) { e.slowF = 1; refreshTint(e); } }
+    if (e.burnT > 0) {                                // podpal = poškození v čase (ignoruje pancíř)
+      e.burnT -= dt; damageEnemy(e, e.burnDps * dt, true);
+      if (!e.alive) continue;
+      if (Math.random() < dt * 14) flameP(e.aim.x + (Math.random() - 0.5) * 0.6, e.aim.y + 0.2, e.aim.z + (Math.random() - 0.5) * 0.6, 0, 1.6, 0, 0.35);
+      if (e.burnT <= 0) { e.burnDps = 0; refreshTint(e); }
+    }
+    if (e.poisonT > 0) {                              // otrava = poškození v čase (ignoruje pancíř, brání léčení)
+      e.poisonT -= dt; damageEnemy(e, e.poisonDps * dt, true);
+      if (!e.alive) continue;
+      if (Math.random() < dt * 6) burst(_v3.set(e.aim.x + (Math.random() - 0.5) * 0.6, e.aim.y + 0.4, e.aim.z + (Math.random() - 0.5) * 0.6), 0xa3e635, 1, 1.2);
+      if (e.poisonT <= 0) { e.poisonDps = 0; refreshTint(e); }
+    }
+    if (e.def.heals) {                                // léčitel pravidelně léčí nepřátele v okolí
+      e.healCd -= dt;
+      if (e.healCd <= 0) {
+        e.healCd = 2.2;
+        for (const o of enemies) {
+          if (o === e || !o.alive || o.hp >= o.maxHp || o.poisonT > 0) continue;
+          const hx = o.pos.x - e.pos.x, hz = o.pos.z - e.pos.z;
+          if (hx * hx + hz * hz > 25) continue;
+          o.hp = Math.min(o.maxHp, o.hp + o.maxHp * (o.def.boss ? 0.02 : 0.12));
+          if (o.bar) updateBar(o);
+        }
+        ringFx(e.pos, 0x4ade80, 5, 0.6);
+      }
+    }
+    if (e.def.stun) {                                 // omračující nepřátelé
+      if (e.body.userData.spin) e.body.userData.spin.rotation.y += dt * 5;
+      e.stunCd -= dt;
+      if (e.stunCd <= 0 && e.born >= 1 && stunPulse(e)) e.stunCd = e.def.stun.every;
+    }
+    e.dist += e.speed * (e.slowT > 0 ? e.slowF : 1) * dt;
+    if (e.dist >= pathLength) {                       // nepřítel došel do cíle
+      e.alive = false; baseFlash = 1; shake = Math.max(shake, 0.25 + e.def.leak * 0.04); sfx('leak');
+      setLives(Math.max(0, lives - e.def.leak));
+      popText(e.pos, '-' + e.def.leak + ' ❤️', 'text-rose-400');
+      if (lives <= 0) endGame(false);
+      continue;
+    }
+    posOnPath(e.dist, e.pos, e.dir);
+    e.born = Math.min(1, e.born + dt * 3);
+    e.root.scale.setScalar(Math.max(0.01, e.born));
+    e.root.position.copy(e.pos);
+    e.body.position.y = e.def.center + Math.sin(time * 4 + e.phase) * 0.1;
+    e.body.rotation.y = lerpAngle(e.body.rotation.y, Math.atan2(e.dir.x, e.dir.z), Math.min(1, dt * 10));
+    e.aim.set(e.pos.x, e.def.center, e.pos.z);
+    if (e.bar) e.bar.quaternion.copy(camera.quaternion);   // health bar vždy čelem ke kameře
+  }
+  for (let i = enemies.length - 1; i >= 0; i--) if (!enemies[i].alive) { removeEnemy(enemies[i]); enemies.splice(i, 1); }
+}
+
+function step(dt) {
+  gameTime += dt;
+  for (const a of ABILITIES) if (abil[a.id].cd > 0) abil[a.id].cd = Math.max(0, abil[a.id].cd - dt);
+  for (let i = timed.length - 1; i >= 0; i--) if (timed[i].t <= gameTime) { const ev = timed.splice(i, 1)[0]; ev.fn(); }
+  while (spawnEvents.length && spawnEvents[0].t <= gameTime) { const s = spawnEvents.shift(); spawnEvents.length; spawnEnemy(s.type, s.hpMul); }
+  updateEnemies(dt);
+  if (state !== 'playing') return;
+  updateAuras();
+  for (const t of towers) updateTower(t, dt);
+  updatePanelStatus();
+  updateUnits(dt);
+  updateProjectiles(dt);
+  updateEffects(dt);
+  if (waveRunning && spawnEvents.length === 0 && enemies.length === 0) {
+    waveRunning = false;
+    const coins = (wave - wavesRewarded) * MODE.coinsPerWave;     // mince za dokončené vlny
+    wavesRewarded = wave; awardCoins(coins);
+    if (wave >= CFG.MAX_WAVES) { endGame(true); return; }
+    const bonus = MODE.bonusBase + wave * MODE.bonusPer;
+    setMoney(money + bonus); toast(`Vlna ${wave} zvládnuta! Bonus +${bonus} 🪙 · +${coins} 🏅`); sfx('up');
+    if (autoWave) queueAutoWave(4);
+  }
+}
+
+/* =====================================================================
+ *  KONEC HRY / RESTART
+ * ===================================================================== */
+function endGame(win, quit = false) {
+  if (win) awardCoins(MODE.coinsWin);
+  state = win ? 'victory' : 'gameover';
+  paused = false; hide($('pauseOverlay')); $('btnPause').textContent = '⏸'; resetQuit();
+  placingType = null; rebuildGhost(); updateHover(); deselectTower(); refreshShop(); refreshWaveButton();
+  const record = recordBest(), survived = survivedWaves();
+  $('endIcon').textContent = win ? '🏆' : quit ? '🏁' : '💀';
+  $('endTitle').textContent = win ? 'Vítězství!' : quit ? 'Hra ukončena' : 'Game Over';
+  $('endTitle').className = 'text-4xl font-bold mt-2 ' + (win ? 'text-amber-300' : quit ? 'text-sky-300' : 'text-rose-400');
+  $('endText').textContent = win
+    ? `Království je zachráněno! Přežil jsi všech ${CFG.MAX_WAVES} vln, zbývá ti ${lives} životů a zničil jsi ${kills} nepřátel.`
+    : MODE.infinite
+      ? `${quit ? 'Ukončil jsi hru' : 'Základna padla'} – přežil jsi ${survived} vln a zničil jsi ${kills} nepřátel. ` + (record ? '🏆 Nový rekord!' : save.best.infinite ? `Rekord: ${save.best.infinite} vln.` : '')
+      : quit ? `Ukončil jsi hru ve vlně ${wave}. Zničil jsi ${kills} nepřátel.` : `Základna padla ve vlně ${wave}. Zničil jsi ${kills} nepřátel.`;
+  $('endText').textContent += ` Získal jsi 🏅 ${runCoins} mincí (utratíš je v Obchodě).`;
+  show($('endOverlay'));
+}
+
+function resetGame() {
+  MODE = GAME_MODES[mode]; CFG.MAX_WAVES = MODE.waves;
+  $('hudMax').textContent = MODE.infinite ? '∞' : MODE.waves; $('hudMode').textContent = MODE.label;
+  scene.background.setHex(MODE.sky); scene.fog.color.setHex(MODE.sky);   // Normal = západ slunce
+  for (const e of enemies) removeEnemy(e);
+  for (const t of towers) { scene.remove(t.group); disposeObject(t.group); }
+  for (const p of projectiles) scene.remove(p.m);
+  for (const p of particles) scene.remove(p.m);
+  for (const u of units) { scene.remove(u.group); disposeObject(u.group); }
+  for (const f of fxs) killFx(f);
+  enemies = []; towers = []; projectiles = []; particles = []; fxs = []; units = []; spawnEvents = [];
+  timed = []; cancelArmed(); shake = 0; for (const a of ABILITIES) abil[a.id].cd = Math.round(a.cd * 0.35);
+  towerGrid.clear(); pops.innerHTML = '';
+  placingType = null; rebuildGhost(); deselectTower(); updateHover();
+  gameTime = 0; waveRunning = false; kills = 0; speed = 1; paused = false; warnedStun = false;
+  $('btnSpeed').textContent = '⏩ 1x'; $('btnPause').textContent = '⏸'; hide($('pauseOverlay'));
+  lives = MODE.lives; hudLives.textContent = lives;
+  money = MODE.money; hudMoney.textContent = money;
+  wave = 0; hudWave.textContent = 0;
+  wavesRewarded = 0; runCoins = 0;
+  buildShop(); refreshWaveButton();
+}
+
+function startGame(m) {
+  if (typeof m === 'string') mode = m;
+  resetGame(); state = 'playing';
+  hide($('menu')); hide($('endOverlay')); refreshWaveButton();
+  toast('Postav věže a spusť první vlnu!'); sfx('up');
+}
+
+function toMenu() {
+  if (typeof resetQuit === 'function') resetQuit();
+  resetGame(); state = 'menu';
+  hide($('endOverlay')); show($('menu')); refreshWaveButton();
+}
+
+function togglePause() {
+  if (state !== 'playing') return;
+  paused = !paused;
+  $('btnPause').textContent = paused ? '▶' : '⏸';
+  paused ? show($('pauseOverlay')) : hide($('pauseOverlay'));
+}
+function toggleSpeed() { speed = speed === 1 ? 2 : speed === 2 ? 3 : 1; $('btnSpeed').textContent = '⏩ ' + speed + 'x'; }
+
+/* =====================================================================
+ *  VSTUP: raycasting myši / dotyku, klávesnice
+ * ===================================================================== */
+const raycaster = new T.Raycaster(), ndc = new T.Vector2();
+const groundPlane = new T.Plane(new T.Vector3(0, 1, 0), 0), groundHit = new T.Vector3();
+const canvas = renderer.domElement;
+
+function updatePointer(e) {
+  ndc.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  if (raycaster.ray.intersectPlane(groundPlane, groundHit)) {
+    if (armed) airRing.position.set(groundHit.x, 0.12, groundHit.z);
+    const g = worldToGrid(groundHit.x, groundHit.z);
+    hoverCell = inBounds(g.c, g.r) ? g : null;
+  } else hoverCell = null;
+}
+function pickTower() {
+  if (!towers.length) return null;
+  const hits = raycaster.intersectObjects(towers.map(t => t.group), true);
+  if (!hits.length) return null;
+  let o = hits[0].object;
+  while (o && !o.userData.tower) o = o.parent;
+  return o ? o.userData.tower : null;
+}
+
+canvas.addEventListener('pointermove', e => {
+  if (state !== 'playing') return;
+  updatePointer(e); updateHover();
+  canvas.style.cursor = (placingType || armed) ? 'crosshair' : (pickTower() ? 'pointer' : 'default');
+});
+canvas.addEventListener('pointerdown', e => {
+  if (state !== 'playing') return;
+  updatePointer(e);
+  if (e.button === 2) { cancelPlacing(); cancelArmed(); return; }
+  if (e.button !== 0 && e.pointerType === 'mouse') return;
+  if (armed) { fireArmed(); return; }
+  if (placingType) { if (hoverCell) tryPlace(hoverCell.c, hoverCell.r, e.shiftKey); return; }
+  const t = pickTower();
+  if (t) selectTower(t); else deselectTower();
+});
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+window.addEventListener('keydown', e => {
+  if (!$('authOverlay').classList.contains('hidden')) { if (e.code === 'Escape') closeAuth(); return; }   // píšeme do formuláře – herní klávesy nic nedělají
+  if (e.repeat) return;
+  if (!$('shopOverlay').classList.contains('hidden')) { if (e.code === 'Escape') closeShop(); return; }
+  if (state === 'menu' && (e.code === 'Enter')) { startGame(); return; }
+  if ((state === 'gameover' || state === 'victory') && e.code === 'Enter') { startGame(); return; }
+  if (state !== 'playing') return;
+  switch (e.code) {
+    case 'Digit1': case 'Digit2': case 'Digit3': case 'Digit4': case 'Digit5': case 'Digit6': case 'Digit7': {    // N-tá vybavená věž v liště
+      const id = equippedList()[+e.code.slice(5) - 1];
+      if (id) selectShop(id);
+      break;
+    }
+    case 'Escape': if (armed) cancelArmed(); else if (placingType) cancelPlacing(); else deselectTower(); break;
+    case 'KeyQ': triggerAbility('air'); break;
+    case 'KeyW': triggerAbility('freeze'); break;
+    case 'KeyE': triggerAbility('cash'); break;
+    case 'KeyR': triggerAbility('repair'); break;
+    case 'KeyA': toggleAuto(); break;
+    case 'Space': e.preventDefault(); togglePause(); break;
+    case 'KeyN': case 'Enter': startNextWave(); break;
+    case 'KeyF': toggleSpeed(); break;
+    case 'KeyU': upgradeTower(selectedTower); break;
+    case 'KeyS': sellTower(selectedTower); break;
+  }
+});
+
+// Tlačítka UI
+$('btnEasy').addEventListener('click', () => startGame('easy'));
+$('btnNormal').addEventListener('click', () => startGame('normal'));
+$('btnHard').addEventListener('click', () => startGame('hard'));
+$('btnInfinite').addEventListener('click', () => startGame('infinite'));
+$('btnRestart').addEventListener('click', () => startGame());
+$('btnMenu').addEventListener('click', toMenu);
+$('btnShop').addEventListener('click', openShop);
+$('btnAccount').addEventListener('click', () => { if (cloud.user) doLogout(); else openAuth(); });
+$('btnAuthClose').addEventListener('click', closeAuth);
+$('authForm').addEventListener('submit', e => { e.preventDefault(); doAuth('login'); });
+$('btnRegister').addEventListener('click', () => doAuth('register'));
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && cloud.timer) cloudPush(true); });
+window.addEventListener('pagehide', () => { if (cloud.timer) cloudPush(true); });
+$('btnEndShop').addEventListener('click', openShop);
+$('btnShopClose').addEventListener('click', closeShop);
+$('btnResume').addEventListener('click', togglePause);
+let quitArmed = 0;
+function resetQuit() { clearTimeout(quitArmed); quitArmed = 0; $('btnQuit').textContent = '🏠 Ukončit hru'; }
+$('btnQuit').addEventListener('click', () => {
+  if (!quitArmed) {                                   // první klik = potvrzení, druhý klik = opravdu ukončit
+    $('btnQuit').textContent = '⚠️ Opravdu ukončit? (klikni znovu)';
+    quitArmed = setTimeout(resetQuit, 3000); return;
+  }
+  resetQuit();
+  if (MODE.infinite && wave > 0) endGame(false, true);   // v Infinite je ukončení běžný konec – ukáže výsledek a rekord
+  else toMenu();
+});
+$('btnWave').addEventListener('click', startNextWave);
+$('btnSpeed').addEventListener('click', toggleSpeed);
+$('btnAuto').addEventListener('click', toggleAuto);
+$('btnPause').addEventListener('click', togglePause);
+$('btnSound').addEventListener('click', () => { muted = !muted; $('btnSound').textContent = muted ? '🔇' : '🔊'; });
+$('tpClose').addEventListener('click', deselectTower);
+$('btnUpgrade').addEventListener('click', () => upgradeTower(selectedTower));
+$('btnSell').addEventListener('click', () => sellTower(selectedTower));
+$('btnTarget').addEventListener('click', () => {
+  if (!selectedTower) return;
+  const order = ['first', 'last', 'strong'];
+  selectedTower.mode = order[(order.indexOf(selectedTower.mode) + 1) % order.length];
+  refreshPanel();
+});
+document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'playing' && !paused) togglePause(); });
+window.addEventListener('resize', fitCamera);
+
+/* =====================================================================
+ *  HLAVNÍ SMYČKA
+ * ===================================================================== */
+const clock = new T.Clock();
+function loop() {
+  requestAnimationFrame(loop);
+  const rdt = Math.min(clock.getDelta(), 0.1);
+  time += rdt;
+
+  if (state === 'playing' && !paused) {
+    const sim = rdt * speed, steps = Math.max(1, Math.ceil(sim / 0.04)), h = sim / steps;   // podkroky = stabilní simulace i při 2x
+    for (let i = 0; i < steps && state === 'playing'; i++) step(h);
+  }
+
+  // Kosmetické animace (běží i v menu / pauze)
+  portalDisc.rotation.z += rdt * 2.5;
+  portalRing2.rotation.z -= rdt * 1.5;
+  portalRing.scale.setScalar(1 + Math.sin(time * 3) * 0.03);
+  if (baseFlash > 0) { baseFlash = Math.max(0, baseFlash - rdt * 2); base.rotation.z = Math.sin(time * 70) * 0.04 * baseFlash; if (baseFlash === 0) base.rotation.z = 0; }
+  const pulse = 0.5 + 0.5 * Math.sin(time * 5);
+  if (rangeSel.visible) rangeSel.userData.ring.material.opacity = 0.6 + pulse * 0.3;
+
+  renderAbilities();
+  let sx = 0, sy = 0, sz = 0;
+  if (shake > 0) {                                   // otřes kamery (zásah základny, nálet)
+    shake = Math.max(0, shake - rdt * 2.2); const a = shake * 0.6;
+    sx = (Math.random() - 0.5) * a; sy = (Math.random() - 0.5) * a * 0.6; sz = (Math.random() - 0.5) * a;
+    camera.position.x += sx; camera.position.y += sy; camera.position.z += sz;
+  }
+  renderer.render(scene, camera);
+  camera.position.x -= sx; camera.position.y -= sy; camera.position.z -= sz;
+}
+
+/* =====================================================================
+ *  START
+ * ===================================================================== */
+fitCamera();
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitCamera);
+loadSave(); renderCoins(); renderAccount(); if (cloud.enabled && cloud.token) cloudSync();
+for (const [k, m] of Object.entries(GAME_MODES)) {
+  $('reward' + k[0].toUpperCase() + k.slice(1)).textContent = `Odměna: ${m.coinsPerWave} 🏅 / vlna` + (m.coinsWin ? `, +${m.coinsWin} 🏅 za výhru` : '') + (m.bossCoins ? `, +${m.bossCoins} 🏅 za bosse` : '');
+}
+function renderMapPick() {
+  const box = $('mapPick'); box.innerHTML = '';
+  MAPS.forEach((m, i) => {
+    const b = document.createElement('button');
+    b.className = 'rounded-xl px-3 py-1.5 text-sm font-bold transition active:scale-95 ' + (i === MAP_IDX ? 'bg-amber-500 text-slate-900' : 'bg-slate-700 hover:bg-slate-600');
+    b.textContent = `${m.icon} ${m.name}`;
+    b.addEventListener('click', () => {
+      if (i === MAP_IDX) return;
+      try { localStorage.setItem('td3d_map', String(i)); } catch (e) { /* ignorováno */ }
+      location.reload();                              // mapa se staví při načtení, proto se stránka načte znovu (postup zůstává uložen)
+    });
+    box.appendChild(b);
+  });
+}
+renderMapPick(); buildAbilityBar();
+renderBest(); renderLoadout();
+resetGame();
+state = 'menu';
+refreshWaveButton();
+loop();
+})();
+</script>
+</body>
+</html>
